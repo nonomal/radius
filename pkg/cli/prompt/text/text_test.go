@@ -78,7 +78,7 @@ func Test_E2E(t *testing.T) {
 			Placeholder: "test placeholder",
 		}
 		model := NewTextModel("test prompt", options)
-		return teatest.NewTestModel(t, model, teatest.WithInitialTermSize(80, 50))
+		return teatest.NewTestModel(t, model, teatest.WithInitialTermSize(18, 50))
 	}
 
 	normalizeOutput := func(bts []byte) string {

@@ -44,6 +44,7 @@ func Test_summaryModel(t *testing.T) {
 
 		return normalized
 	}
+
 	waitForEmpty := func(t *testing.T, reader io.Reader) string {
 		normalized := ""
 		teatest.WaitFor(t, reader, func(bts []byte) bool {
@@ -76,9 +77,11 @@ func Test_summaryModel(t *testing.T) {
 	t.Run("Result: Confirm", func(t *testing.T) {
 		resultTest(t, resultConfimed, tea.KeyEnter)
 	})
+
 	t.Run("Result: Cancel", func(t *testing.T) {
 		resultTest(t, resultCanceled, tea.KeyEscape)
 	})
+
 	t.Run("Result: Quit", func(t *testing.T) {
 		resultTest(t, resultQuit, tea.KeyCtrlC)
 	})
