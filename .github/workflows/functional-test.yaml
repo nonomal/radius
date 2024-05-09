@@ -549,7 +549,7 @@ jobs:
       - name: Process Func Test Results
         uses: ./.github/actions/process-test-results
         # Always is required here to make sure this target runs even when tests fail.
-        if: failure() && github.event_name == 'schedule' && github.repository == 'radius-project/radius'
+        if: failure() && github.event_name == 'workflow_dispatch' && github.repository == 'radius-project/radius'
         with:
           test_group_name: 'Functional Tests'
           artifact_name: 'functional_test_results'
