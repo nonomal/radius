@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/configloader"
@@ -294,7 +293,7 @@ func Test_Engine_Terraform_Success(t *testing.T) {
 	driverWithSecrets.EXPECT().
 		FindSecretIDs(ctx, *envConfig, *recipeDefinition).
 		Times(1).
-		Return("", nil)
+		Return(nil, nil)
 	driverWithSecrets.EXPECT().
 		Execute(ctx, recipedriver.ExecuteOptions{
 			BaseOptions: recipedriver.BaseOptions{
@@ -318,22 +317,32 @@ func Test_Engine_Terraform_Success(t *testing.T) {
 }
 func Test_Engine_Terraform_Failure(t *testing.T) {
 	tests := []struct {
-		name              string
-		errFindSecretRefs error
-		errLoadSecrets    error
-		errExecute        error
+		name                   string
+		errFindSecretRefs      error
+		errLoadSecrets         error
+		errLoadSecretsNotFound error
+		errExecute             error
+		expectedErrMsg         string
 	}{
 		{
 			name:              "find secret references failed",
 			errFindSecretRefs: fmt.Errorf("failed to parse git url %s", "git://https://dev.azure.com/mongo-recipe/recipe"),
+			expectedErrMsg:    "failed to parse git url git://https://dev.azure.com/mongo-recipe/recipe",
 		},
 		{
 			name:           "failed loading secrets",
-			errLoadSecrets: fmt.Errorf("%q is a valid resource id but does not refer to a resource", ""),
+			errLoadSecrets: fmt.Errorf("%q is a valid resource id but does not refer to a resource", "secretstoreid1"),
+			expectedErrMsg: "code LoadSecretsFailed: err failed to fetch secrets for Terraform recipe git://https://dev.azure.com/mongo-recipe/recipe deployment: \"secretstoreid1\" is a valid resource id but does not refer to a resource",
 		},
 		{
-			name:       "find secret references failed",
-			errExecute: errors.New("failed to add git config"),
+			name:                   "failed loading secrets - secret store id not found",
+			errLoadSecretsNotFound: fmt.Errorf("a secret key was not found in secret store 'secretstoreid1'"),
+			expectedErrMsg:         "code LoadSecretsFailed: err failed to fetch secrets for Terraform recipe git://https://dev.azure.com/mongo-recipe/recipe deployment: a secret key was not found in secret store 'secretstoreid1'",
+		},
+		{
+			name:           "find secret references failed",
+			errExecute:     errors.New("failed to add git config"),
+			expectedErrMsg: "failed to add git config",
 		},
 	}
 	for _, tc := range tests {
@@ -405,23 +414,28 @@ func Test_Engine_Terraform_Failure(t *testing.T) {
 				driverWithSecrets.EXPECT().
 					FindSecretIDs(ctx, *envConfig, *recipeDefinition).
 					Times(1).
-					Return("", tc.errFindSecretRefs)
+					Return(nil, tc.errFindSecretRefs)
 			} else {
 				driverWithSecrets.EXPECT().
 					FindSecretIDs(ctx, *envConfig, *recipeDefinition).
 					Times(1).
-					Return("/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit", nil)
+					Return(map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}, nil)
 
 				if tc.errLoadSecrets != nil {
 					secretsLoader.EXPECT().
 						LoadSecrets(ctx, gomock.Any()).
 						Times(1).
-						Return(v20231001preview.SecretStoresClientListSecretsResponse{}, tc.errLoadSecrets)
+						Return(nil, tc.errLoadSecrets)
+				} else if tc.errLoadSecretsNotFound != nil {
+					secretsLoader.EXPECT().
+						LoadSecrets(ctx, gomock.Any()).
+						Times(1).
+						Return(nil, tc.errLoadSecretsNotFound)
 				} else {
 					secretsLoader.EXPECT().
 						LoadSecrets(ctx, gomock.Any()).
 						Times(1).
-						Return(v20231001preview.SecretStoresClientListSecretsResponse{}, nil)
+						Return(nil, nil)
 					if tc.errExecute != nil {
 						driverWithSecrets.EXPECT().
 							Execute(ctx, recipedriver.ExecuteOptions{
@@ -456,8 +470,8 @@ func Test_Engine_Terraform_Failure(t *testing.T) {
 				},
 				PreviousState: prevState,
 			})
-			if tc.errFindSecretRefs != nil || tc.errLoadSecrets != nil || tc.errExecute != nil {
-				require.Error(t, err)
+			if tc.errFindSecretRefs != nil || tc.errLoadSecrets != nil || tc.errExecute != nil || tc.errLoadSecretsNotFound != nil {
+				require.EqualError(t, err, tc.expectedErrMsg)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, result, recipeResult)
@@ -812,34 +826,147 @@ func Test_Delete_Lookup_Error(t *testing.T) {
 }
 
 func Test_Engine_GetRecipeMetadata_Success(t *testing.T) {
-	_, recipeDefinition, _ := getRecipeInputs()
-
+	recipeMetadata, recipeDefinition, _ := getRecipeInputs()
+	envConfig := &recipes.Configuration{
+		Runtime: recipes.RuntimeConfiguration{
+			Kubernetes: &recipes.KubernetesRuntime{
+				Namespace: "default",
+			},
+		},
+		Providers: datamodel.Providers{
+			Azure: datamodel.ProvidersAzure{
+				Scope: "scope",
+			},
+		},
+	}
 	ctx := testcontext.New(t)
-	engine, _, driver, _, _ := setup(t)
+	engine, configLoader, driver, _, _ := setup(t)
 	outputParams := map[string]any{"parameters": recipeDefinition.Parameters}
 
+	configLoader.EXPECT().
+		LoadConfiguration(ctx, recipeMetadata).
+		Times(1).
+		Return(envConfig, nil)
 	driver.EXPECT().GetRecipeMetadata(ctx, recipedriver.BaseOptions{
-		Recipe:     recipes.ResourceMetadata{},
-		Definition: recipeDefinition,
+		Recipe:        recipes.ResourceMetadata{},
+		Definition:    recipeDefinition,
+		Configuration: *envConfig,
 	}).Times(1).Return(outputParams, nil)
 
-	recipeData, err := engine.GetRecipeMetadata(ctx, recipeDefinition)
+	recipeData, err := engine.GetRecipeMetadata(ctx, GetRecipeMetadataOptions{
+		BaseOptions: BaseOptions{
+			Recipe: recipeMetadata,
+		},
+		RecipeDefinition: recipeDefinition,
+	})
+	require.NoError(t, err)
+	require.Equal(t, outputParams, recipeData)
+}
+func Test_Engine_GetRecipeMetadata_Private_Module_Success(t *testing.T) {
+	recipeMetadata := recipes.ResourceMetadata{
+		Name:          "mongo-azure",
+		ApplicationID: "/planes/radius/local/resourcegroups/test-rg/providers/applications.core/applications/app1",
+		EnvironmentID: "/planes/radius/local/resourcegroups/test-rg/providers/applications.core/environments/env1",
+		ResourceID:    "/planes/radius/local/resourceGroups/test-rg/providers/Microsoft.Resources/deployments/recipe",
+		Parameters: map[string]any{
+			"resourceName": "resource1",
+		},
+	}
+	recipeDefinition := &recipes.EnvironmentDefinition{
+		Driver:       recipes.TemplateKindTerraform,
+		TemplatePath: "git://https://dev.azure.com/mongo-recipe/recipe",
+		ResourceType: "Applications.Datastores/mongoDatabases",
+	}
+	envConfig := &recipes.Configuration{
+		Runtime: recipes.RuntimeConfiguration{
+			Kubernetes: &recipes.KubernetesRuntime{
+				Namespace: "default",
+			},
+		},
+		Providers: datamodel.Providers{
+			Azure: datamodel.ProvidersAzure{
+				Scope: "scope",
+			},
+		},
+		RecipeConfig: datamodel.RecipeConfigProperties{
+			Terraform: datamodel.TerraformConfigProperties{
+				Authentication: datamodel.AuthConfig{
+					Git: datamodel.GitAuthConfig{
+						PAT: map[string]datamodel.SecretConfig{
+							"dev.azure.com": {
+								Secret: "/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	ctx := testcontext.New(t)
+	engine, configLoader, _, driverWithSecrets, secretsLoader := setup(t)
+	outputParams := map[string]any{"parameters": recipeDefinition.Parameters}
+
+	configLoader.EXPECT().
+		LoadConfiguration(ctx, recipeMetadata).
+		Times(1).
+		Return(envConfig, nil)
+	driverWithSecrets.EXPECT().
+		FindSecretIDs(ctx, *envConfig, *recipeDefinition).
+		Times(1).
+		Return(map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}, nil)
+	secretsLoader.EXPECT().
+		LoadSecrets(ctx, map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}).
+		Times(1).
+		Return(nil, nil)
+	driverWithSecrets.EXPECT().GetRecipeMetadata(ctx, recipedriver.BaseOptions{
+		Recipe:        recipes.ResourceMetadata{},
+		Definition:    *recipeDefinition,
+		Configuration: *envConfig,
+	}).Times(1).Return(outputParams, nil)
+
+	recipeData, err := engine.GetRecipeMetadata(ctx, GetRecipeMetadataOptions{
+		BaseOptions: BaseOptions{
+			Recipe: recipeMetadata,
+		},
+		RecipeDefinition: *recipeDefinition,
+	})
 	require.NoError(t, err)
 	require.Equal(t, outputParams, recipeData)
 }
 
 func Test_GetRecipeMetadata_Driver_Error(t *testing.T) {
-	_, recipeDefinition, _ := getRecipeInputs()
-
+	recipeMetadata, recipeDefinition, _ := getRecipeInputs()
+	envConfig := &recipes.Configuration{
+		Runtime: recipes.RuntimeConfiguration{
+			Kubernetes: &recipes.KubernetesRuntime{
+				Namespace: "default",
+			},
+		},
+		Providers: datamodel.Providers{
+			Azure: datamodel.ProvidersAzure{
+				Scope: "scope",
+			},
+		},
+	}
 	ctx := testcontext.New(t)
-	engine, _, driver, _, _ := setup(t)
+	engine, configLoader, driver, _, _ := setup(t)
 
+	configLoader.EXPECT().
+		LoadConfiguration(ctx, recipeMetadata).
+		Times(1).
+		Return(envConfig, nil)
 	driver.EXPECT().GetRecipeMetadata(ctx, recipedriver.BaseOptions{
-		Recipe:     recipes.ResourceMetadata{},
-		Definition: recipeDefinition,
+		Recipe:        recipes.ResourceMetadata{},
+		Definition:    recipeDefinition,
+		Configuration: *envConfig,
 	}).Times(1).Return(nil, errors.New("driver failure"))
 
-	_, err := engine.GetRecipeMetadata(ctx, recipeDefinition)
+	_, err := engine.GetRecipeMetadata(ctx, GetRecipeMetadataOptions{
+		BaseOptions: BaseOptions{
+			Recipe: recipeMetadata,
+		},
+		RecipeDefinition: recipeDefinition,
+	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "driver failure")
 }
@@ -847,11 +974,33 @@ func Test_GetRecipeMetadata_Driver_Error(t *testing.T) {
 func Test_GetRecipeMetadata_Driver_InvalidDriver(t *testing.T) {
 	_, recipeDefinition, _ := getRecipeInputs()
 	recipeDefinition.Driver = "invalid"
-
+	recipeMetadata := recipes.ResourceMetadata{
+		EnvironmentID: "/planes/radius/local/resourcegroups/test-rg/providers/applications.core/environments/env1",
+	}
 	ctx := testcontext.New(t)
-	engine, _, _, _, _ := setup(t)
-
-	_, err := engine.GetRecipeMetadata(ctx, recipeDefinition)
+	engine, configLoader, _, _, _ := setup(t)
+	envConfig := &recipes.Configuration{
+		Runtime: recipes.RuntimeConfiguration{
+			Kubernetes: &recipes.KubernetesRuntime{
+				Namespace: "default",
+			},
+		},
+		Providers: datamodel.Providers{
+			Azure: datamodel.ProvidersAzure{
+				Scope: "scope",
+			},
+		},
+	}
+	configLoader.EXPECT().
+		LoadConfiguration(ctx, recipeMetadata).
+		Times(1).
+		Return(envConfig, nil)
+	_, err := engine.GetRecipeMetadata(ctx, GetRecipeMetadataOptions{
+		BaseOptions: BaseOptions{
+			Recipe: recipeMetadata,
+		},
+		RecipeDefinition: recipeDefinition,
+	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "could not find driver invalid")
 }
@@ -947,11 +1096,11 @@ func Test_Engine_Execute_With_Secrets_Success(t *testing.T) {
 	driverWithSecrets.EXPECT().
 		FindSecretIDs(ctx, *envConfig, *recipeDefinition).
 		Times(1).
-		Return("/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit", nil)
+		Return(map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}, nil)
 	secretsLoader.EXPECT().
 		LoadSecrets(ctx, gomock.Any()).
 		Times(1).
-		Return(v20231001preview.SecretStoresClientListSecretsResponse{}, nil)
+		Return(nil, nil)
 	driverWithSecrets.EXPECT().
 		Execute(ctx, recipedriver.ExecuteOptions{
 			BaseOptions: recipedriver.BaseOptions{
@@ -1030,11 +1179,11 @@ func Test_Engine_Delete_With_Secrets_Success(t *testing.T) {
 	driverWithSecrets.EXPECT().
 		FindSecretIDs(ctx, *envConfig, *recipeDefinition).
 		Times(1).
-		Return("/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit", nil)
+		Return(map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}, nil)
 	secretsLoader.EXPECT().
-		LoadSecrets(ctx, "/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit").
+		LoadSecrets(ctx, map[string][]string{"/planes/radius/local/resourcegroups/default/providers/Applications.Core/secretStores/azdevopsgit": {"username", "pat"}}).
 		Times(1).
-		Return(v20231001preview.SecretStoresClientListSecretsResponse{}, nil)
+		Return(nil, nil)
 	driverWithSecrets.EXPECT().
 		Delete(ctx, recipedriver.DeleteOptions{
 			BaseOptions: recipedriver.BaseOptions{

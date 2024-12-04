@@ -26,6 +26,9 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/radius-project/radius/pkg/cli/aws"
+	"github.com/radius-project/radius/pkg/cli/azure"
 	"github.com/radius-project/radius/pkg/cli/prompt"
 )
 
@@ -35,8 +38,8 @@ const (
 	summaryFooter                                 = "\n(press enter to confirm or esc to restart)\n"
 	summaryKubernetesHeadingIcon                  = "🔧 "
 	summaryKubernetesInstallHeadingFmt            = "Install Radius %s\n" + summaryIndent + "Kubernetes cluster: %s\n" + summaryIndent + "Kubernetes namespace: %s\n"
-	summaryKubernetesInstallAWSCloudProviderFmt   = summaryIndent + "AWS IAM access key id: %s\n"
-	summaryKubernetesInstallAzureCloudProviderFmt = summaryIndent + "Azure service principal: %s\n"
+	summaryKubernetesInstallAWSCloudProviderFmt   = summaryIndent + "AWS credential: %s\n"
+	summaryKubernetesInstallAzureCloudProviderFmt = summaryIndent + "Azure credential: %s\n"
 	summaryKubernetesExistingHeadingFmt           = "Use existing Radius %s install on %s\n"
 	summaryEnvironmentHeadingIcon                 = "🌏 "
 	summaryEnvironmentCreateHeadingFmt            = "Create new environment %s\n" + summaryIndent + "Kubernetes namespace: %s\n"
@@ -132,6 +135,7 @@ type summaryModel struct {
 	style   lipgloss.Style
 	result  summaryResult
 	options initOptions
+	width   int
 }
 
 // NewSummaryModel creates a new model for the options summary shown during 'rad init'.
@@ -161,6 +165,8 @@ func (m *summaryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// This function handles messages and state transitions. We don't need to update
 	// any UI here, just return the next model and command.
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 			// User is quitting
@@ -204,10 +210,23 @@ func (m *summaryModel) View() string {
 		message.WriteString(fmt.Sprintf(summaryKubernetesInstallHeadingFmt, highlight(options.Cluster.Version), highlight(options.Cluster.Context), highlight(options.Cluster.Namespace)))
 
 		if options.CloudProviders.AWS != nil {
-			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAWSCloudProviderFmt, highlight(options.CloudProviders.AWS.AccessKeyID)))
+			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAWSCloudProviderFmt, highlight(string(options.CloudProviders.AWS.CredentialKind))))
+			switch options.CloudProviders.AWS.CredentialKind {
+			case aws.AWSCredentialKindAccessKey:
+				message.WriteString(fmt.Sprintf(summaryIndent+"AccessKey ID: %s\n", highlight(options.CloudProviders.AWS.AccessKey.AccessKeyID)))
+			case aws.AWSCredentialKindIRSA:
+				message.WriteString(fmt.Sprintf(summaryIndent+"IAM Role ARN: %s\n", highlight(options.CloudProviders.AWS.IRSA.RoleARN)))
+			}
+
 		}
 		if options.CloudProviders.Azure != nil {
-			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAzureCloudProviderFmt, highlight(options.CloudProviders.Azure.ServicePrincipal.ClientID)))
+			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAzureCloudProviderFmt, highlight(string(options.CloudProviders.Azure.CredentialKind))))
+			switch options.CloudProviders.Azure.CredentialKind {
+			case azure.AzureCredentialKindServicePrincipal:
+				message.WriteString(fmt.Sprintf(summaryIndent+"Client ID: %s\n", highlight(options.CloudProviders.Azure.ServicePrincipal.ClientID)))
+			case azure.AzureCredentialKindWorkloadIdentity:
+				message.WriteString(fmt.Sprintf(summaryIndent+"Client ID: %s\n", highlight(options.CloudProviders.Azure.WorkloadIdentity.ClientID)))
+			}
 		}
 	} else {
 		message.WriteString(fmt.Sprintf(summaryKubernetesExistingHeadingFmt, highlight(options.Cluster.Version), highlight(options.Cluster.Context)))
@@ -236,6 +255,7 @@ func (m *summaryModel) View() string {
 		message.WriteString(summaryApplicationHeadingIcon)
 		message.WriteString(fmt.Sprintf(summaryApplicationScaffoldHeadingFmt, highlight(options.Application.Name)))
 		message.WriteString(fmt.Sprintf(summaryApplicationScaffoldFile, highlight("app.bicep")))
+		message.WriteString(fmt.Sprintf(summaryApplicationScaffoldFile, highlight("bicepconfig.json")))
 		message.WriteString(fmt.Sprintf(summaryApplicationScaffoldFile, highlight(filepath.Join(".rad", "rad.yaml"))))
 	}
 
@@ -244,7 +264,7 @@ func (m *summaryModel) View() string {
 
 	message.WriteString(summaryFooter)
 
-	return m.style.Render(message.String())
+	return m.style.Render(ansi.Hardwrap(message.String(), m.width, true))
 }
 
 var _ tea.Model = &progressModel{}
@@ -269,6 +289,7 @@ type progressModel struct {
 
 	// suppressSpinner is used to suppress the ticking of the spinner for testing.
 	suppressSpinner bool
+	width           int
 }
 
 // Init implements the init function for tea.Model. This will be called when the model is started, before View or
@@ -291,7 +312,9 @@ func (m *progressModel) Init() tea.Cmd {
 // and returns a tea.Cmd to quit the program if the progress is complete.
 func (m *progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
 	// Update our internal state when we receive a progress update message.
 	case progressMsg:
 		m.progress = msg
@@ -330,10 +353,23 @@ func (m *progressModel) View() string {
 		message.WriteString(fmt.Sprintf(summaryKubernetesInstallHeadingFmt, highlight(options.Cluster.Version), highlight(options.Cluster.Context), highlight(options.Cluster.Namespace)))
 
 		if options.CloudProviders.AWS != nil {
-			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAWSCloudProviderFmt, highlight(options.CloudProviders.AWS.AccessKeyID)))
+			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAWSCloudProviderFmt, highlight(string(options.CloudProviders.AWS.CredentialKind))))
+			switch options.CloudProviders.AWS.CredentialKind {
+			case aws.AWSCredentialKindAccessKey:
+				message.WriteString(fmt.Sprintf(summaryIndent+"AccessKey ID: %s\n", highlight(options.CloudProviders.AWS.AccessKey.AccessKeyID)))
+			case aws.AWSCredentialKindIRSA:
+				message.WriteString(fmt.Sprintf(summaryIndent+"IAM Role ARN: %s\n", highlight(options.CloudProviders.AWS.IRSA.RoleARN)))
+			}
 		}
+
 		if options.CloudProviders.Azure != nil {
-			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAzureCloudProviderFmt, highlight(options.CloudProviders.Azure.ServicePrincipal.ClientID)))
+			message.WriteString(fmt.Sprintf(summaryKubernetesInstallAzureCloudProviderFmt, highlight(string(options.CloudProviders.Azure.CredentialKind))))
+			switch options.CloudProviders.Azure.CredentialKind {
+			case azure.AzureCredentialKindServicePrincipal:
+				message.WriteString(fmt.Sprintf(summaryIndent+"Client ID: %s\n", highlight(options.CloudProviders.Azure.ServicePrincipal.ClientID)))
+			case azure.AzureCredentialKindWorkloadIdentity:
+				message.WriteString(fmt.Sprintf(summaryIndent+"Client ID: %s\n", highlight(options.CloudProviders.Azure.WorkloadIdentity.ClientID)))
+			}
 		}
 	} else {
 		message.WriteString(fmt.Sprintf(summaryKubernetesExistingHeadingFmt, highlight(options.Cluster.Version), highlight(options.Cluster.Context)))
@@ -371,7 +407,7 @@ func (m *progressModel) View() string {
 		message.WriteString(progressCompleteFooter)
 	}
 
-	return m.style.Render(message.String())
+	return m.style.Render(ansi.Hardwrap(message.String(), m.width, true))
 }
 
 func (m *progressModel) isComplete() bool {

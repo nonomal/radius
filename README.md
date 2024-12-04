@@ -2,7 +2,7 @@
 
 Radius is a cloud-native application platform that enables developers and the platform engineers that support them to collaborate on delivering and managing cloud-native applications that follow organizational best practices for cost, operations and security, by default. Radius is an open-source project that supports deploying applications across private cloud, Microsoft Azure, and Amazon Web Services, with more cloud providers to come. 
 
-Radius has been submitted for consideration as a Cloud Native Computing Foundation (CNCF) [Sandbox project](https://github.com/cncf/sandbox/issues/65).
+Radius is a [Cloud Native Computing Foundation (CNCF) sandbox project](https://www.cncf.io/sandbox-projects/).
 
 ## Overview
 
@@ -63,7 +63,6 @@ In addition, we have the below repositories.
 | [Samples](https://github.com/radius-project/samples) | This repository contains the source code for quickstarts, reference apps, and tutorials for Radius.
 | [Recipes](https://github.com/radius-project/recipes) | This repo contains commonly used Recipe templates for Radius Environments.
 | [Website](https://github.com/radius-project/website) | This repository contains the source code for the Radius website.
-| [Bicep](https://github.com/radius-project/bicep) | This repository contains source code for Bicep, which is a DSL for deploying cloud resources types. 
 | [AWS Bicep Types](https://github.com/radius-project/bicep-types-aws) | This repository contains the tooling for Bicep support for AWS resource types.
 
 

@@ -19,6 +19,7 @@ package credential
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	sdk_cred "github.com/radius-project/radius/pkg/ucp/credentials"
+	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 
 	"go.uber.org/atomic"
@@ -47,6 +49,9 @@ type UCPCredentialOptions struct {
 
 	// ClientOptions is the options for azure client.
 	ClientOptions *azcore.ClientOptions
+
+	// TokenFilePath is the path to the azure token file (for use with Azure workload identity)
+	TokenFilePath string
 }
 
 // UCPCredential authenticates service principal using UCP credential APIs.
@@ -87,8 +92,6 @@ func (c *UCPCredential) refreshExpiry() {
 }
 
 func (c *UCPCredential) refreshCredentials(ctx context.Context) error {
-	logger := ucplog.FromContextOrDiscard(ctx)
-
 	c.tokenCredMu.Lock()
 	defer c.tokenCredMu.Unlock()
 
@@ -102,18 +105,35 @@ func (c *UCPCredential) refreshCredentials(ctx context.Context) error {
 		return err
 	}
 
-	if s.ClientID == "" || s.ClientSecret == "" || s.TenantID == "" {
-		return errors.New("invalid azure service principal credential info")
+	switch s.Kind {
+	case datamodel.AzureServicePrincipalCredentialKind:
+		return refreshAzureServicePrincipalCredentials(ctx, c, s)
+	case datamodel.AzureWorkloadIdentityCredentialKind:
+		return refreshAzureWorkloadIdentityCredentials(ctx, c, s)
+	default:
+		return fmt.Errorf("unknown Azure credential kind, expected ServicePrincipal or WorkloadIdentity (got %s)", s.Kind)
+	}
+}
+
+func refreshAzureServicePrincipalCredentials(ctx context.Context, c *UCPCredential, s *sdk_cred.AzureCredential) error {
+	logger := ucplog.FromContextOrDiscard(ctx)
+
+	azureServicePrincipalCredential := s.ServicePrincipal
+	if azureServicePrincipalCredential.ClientID == "" || azureServicePrincipalCredential.ClientSecret == "" || azureServicePrincipalCredential.TenantID == "" {
+		return errors.New("Client ID, Tenant ID, or Client Secret can't be empty")
 	}
 
 	// Do not instantiate new client unless the secret is rotated.
-	if c.credential != nil && c.credential.ClientSecret == s.ClientSecret &&
-		c.credential.ClientID == s.ClientID && c.credential.TenantID == s.TenantID {
+	if c.credential != nil &&
+		c.credential.ServicePrincipal != nil &&
+		c.credential.ServicePrincipal.ClientSecret == azureServicePrincipalCredential.ClientSecret &&
+		c.credential.ServicePrincipal.ClientID == azureServicePrincipalCredential.ClientID &&
+		c.credential.ServicePrincipal.TenantID == azureServicePrincipalCredential.TenantID {
 		c.refreshExpiry()
 		return nil
 	}
 
-	logger.Info("Retreived Azure Credential - ClientID: " + s.ClientID)
+	logger.Info("Retrieved Azure Credential - ClientID: " + azureServicePrincipalCredential.ClientID)
 
 	// Rotate credentials by creating new ClientSecretCredential.
 	var opt *azidentity.ClientSecretCredentialOptions
@@ -123,7 +143,7 @@ func (c *UCPCredential) refreshCredentials(ctx context.Context) error {
 		}
 	}
 
-	azCred, err := azidentity.NewClientSecretCredential(s.TenantID, s.ClientID, s.ClientSecret, opt)
+	azCred, err := azidentity.NewClientSecretCredential(azureServicePrincipalCredential.TenantID, azureServicePrincipalCredential.ClientID, azureServicePrincipalCredential.ClientSecret, opt)
 	if err != nil {
 		return err
 	}
@@ -135,7 +155,54 @@ func (c *UCPCredential) refreshCredentials(ctx context.Context) error {
 	return nil
 }
 
-// GetToken attempts to refresh the Azure service principal credential if it is expired and then returns an
+func refreshAzureWorkloadIdentityCredentials(ctx context.Context, c *UCPCredential, s *sdk_cred.AzureCredential) error {
+	logger := ucplog.FromContextOrDiscard(ctx)
+
+	azureWorkloadIdentityCredential := s.WorkloadIdentity
+	if azureWorkloadIdentityCredential.ClientID == "" || azureWorkloadIdentityCredential.TenantID == "" {
+		return errors.New("empty clientID or tenantID provided for Azure workload identity")
+	}
+
+	// Do not instantiate new client unless clientId and tenantId are changed.
+	if c.credential != nil &&
+		c.credential.WorkloadIdentity != nil &&
+		c.credential.WorkloadIdentity.ClientID == azureWorkloadIdentityCredential.ClientID &&
+		c.credential.WorkloadIdentity.TenantID == azureWorkloadIdentityCredential.TenantID {
+		c.refreshExpiry()
+		return nil
+	}
+
+	logger.Info("Retrieved Azure Credential - ClientID: " + azureWorkloadIdentityCredential.ClientID)
+
+	var opt *azidentity.WorkloadIdentityCredentialOptions
+	if c.options.ClientOptions != nil {
+		opt = &azidentity.WorkloadIdentityCredentialOptions{
+			ClientID:      azureWorkloadIdentityCredential.ClientID,
+			TenantID:      azureWorkloadIdentityCredential.TenantID,
+			TokenFilePath: c.options.TokenFilePath,
+			ClientOptions: *c.options.ClientOptions,
+		}
+	} else {
+		opt = &azidentity.WorkloadIdentityCredentialOptions{
+			TokenFilePath: c.options.TokenFilePath,
+			ClientID:      azureWorkloadIdentityCredential.ClientID,
+			TenantID:      azureWorkloadIdentityCredential.TenantID,
+		}
+	}
+
+	azCred, err := azidentity.NewWorkloadIdentityCredential(opt)
+	if err != nil {
+		return err
+	}
+
+	c.tokenCred = azCred
+	c.credential = s
+
+	c.refreshExpiry()
+	return nil
+}
+
+// GetToken attempts to refresh the Azure credential if it is expired and then returns an
 // access token if the credential is ready. This method is called automatically by Azure SDK clients.
 func (c *UCPCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	logger := ucplog.FromContextOrDiscard(ctx)
@@ -143,7 +210,7 @@ func (c *UCPCredential) GetToken(ctx context.Context, opts policy.TokenRequestOp
 	if c.isExpired() {
 		err := c.refreshCredentials(ctx)
 		if err != nil {
-			logger.Error(err, "failed to refresh Azure service principal credential.")
+			logger.Error(err, "failed to refresh Azure credential.")
 		}
 	}
 
@@ -152,7 +219,7 @@ func (c *UCPCredential) GetToken(ctx context.Context, opts policy.TokenRequestOp
 	c.tokenCredMu.RUnlock()
 
 	if credentialAuth == nil {
-		return azcore.AccessToken{}, errors.New("azure service principal credential is not ready")
+		return azcore.AccessToken{}, errors.New("azure credential is not ready")
 	}
 
 	return credentialAuth.GetToken(ctx, opts)

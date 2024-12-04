@@ -22,9 +22,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
+	dm "github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 )
@@ -34,7 +36,7 @@ const (
 	workingDirFileMode fs.FileMode = 0700
 )
 
-//go:generate mockgen -destination=./mock_executor.go -package=terraform -self_package github.com/radius-project/radius/pkg/recipes/terraform github.com/radius-project/radius/pkg/recipes/terraform TerraformExecutor
+//go:generate mockgen -typed -destination=./mock_executor.go -package=terraform -self_package github.com/radius-project/radius/pkg/recipes/terraform github.com/radius-project/radius/pkg/recipes/terraform TerraformExecutor
 type TerraformExecutor interface {
 	// Deploy installs terraform and runs terraform init and apply on the terraform module referenced by the recipe using terraform-exec.
 	Deploy(ctx context.Context, options Options) (*tfjson.State, error)
@@ -60,6 +62,10 @@ type Options struct {
 
 	// ResourceRecipe is recipe metadata associated with the Radius resource deploying the Terraform recipe.
 	ResourceRecipe *recipes.ResourceMetadata
+
+	// Secrets represents a map of secrets required for recipe execution.
+	// The map's key represents the secretStoreIDs while the value represents the secret data.
+	Secrets map[string]recipes.SecretData
 }
 
 // NewTerraform creates a working directory for Terraform execution and new Terraform executor with Terraform logs enabled.
@@ -88,4 +94,55 @@ func createWorkingDir(ctx context.Context, tfDir string) (string, error) {
 	}
 
 	return workingDir, nil
+}
+
+// GetProviderEnvSecretIDs parses the envConfig to extract secret IDs configured in providers configuration and environment variables
+// and returns a map of secret store IDs and corresponding slice of keys.
+func GetProviderEnvSecretIDs(envConfig recipes.Configuration) map[string][]string {
+	providerSecretIDs := make(map[string][]string)
+	var mu sync.Mutex
+
+	// Extract secrets from Terraform providers configuration
+	extractProviderSecretIDs(envConfig.RecipeConfig.Terraform.Providers, providerSecretIDs, &mu)
+
+	// Extract secrets from environment variables
+	extractEnvSecretIDs(envConfig.RecipeConfig.EnvSecrets, providerSecretIDs, &mu)
+
+	return providerSecretIDs
+}
+
+// extractProviderSecrets extracts secrets from Terraform provider configurations
+func extractProviderSecretIDs(providers map[string][]dm.ProviderConfigProperties, secrets map[string][]string, mu *sync.Mutex) {
+	for _, config := range providers {
+		for _, providerConfig := range config {
+			if providerConfig.Secrets != nil {
+				for _, secret := range providerConfig.Secrets {
+					addSecretKeys(secrets, secret.Source, secret.Key, mu)
+				}
+			}
+		}
+	}
+}
+
+// extractEnvSecrets extracts secrets from environment variable configurations
+func extractEnvSecretIDs(envSecrets map[string]dm.SecretReference, secrets map[string][]string, mu *sync.Mutex) {
+	for _, config := range envSecrets {
+		addSecretKeys(secrets, config.Source, config.Key, mu)
+	}
+}
+
+// addSecretKeys updates the secrets map with secretStoreID and key, ensuring thread safety with a mutex.
+func addSecretKeys(secrets map[string][]string, secretStoreID, key string, mu *sync.Mutex) {
+	if secretStoreID == "" || key == "" {
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if _, ok := secrets[secretStoreID]; !ok {
+		secrets[secretStoreID] = []string{key}
+	} else {
+		secrets[secretStoreID] = append(secrets[secretStoreID], key)
+	}
 }

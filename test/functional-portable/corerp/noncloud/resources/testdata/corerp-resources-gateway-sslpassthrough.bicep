@@ -1,8 +1,8 @@
-import kubernetes as kubernetes {
+extension kubernetes with {
   kubeConfig: ''
   namespace: 'default'
-}
-import radius as radius
+} as kubernetes
+extension radius
 
 @description('Specifies the location for resources.')
 param location string = 'local'
@@ -54,8 +54,12 @@ resource frontendContainer 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: magpieimage
       env: {
-        TLS_KEY: tlskey
-        TLS_CERT: tlscrt
+        TLS_KEY: {
+          value: tlskey
+        }
+        TLS_CERT: {
+          value: tlscrt
+        }
       }
       ports: {
         web: {

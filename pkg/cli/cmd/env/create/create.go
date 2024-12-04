@@ -52,7 +52,7 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Long: `Create a new Radius Environment
 Radius Environments are prepared "landing zones" for Radius Applications.
 Applications deployed to an environment will inherit the container runtime, configuration, and other settings from the environment.`,
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.ExactArgs(1),
 		Example: `rad env create myenv`,
 		RunE:    framework.RunCommand(runner),
 	}
@@ -134,7 +134,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.ResourceGroupName = scopeId.FindScope(resources_radius.ScopeResourceGroups)
 
-	_, err = client.ShowUCPGroup(cmd.Context(), "local", r.ResourceGroupName)
+	_, err = client.GetResourceGroup(cmd.Context(), "local", r.ResourceGroupName)
 	if clients.Is404Error(err) {
 		return clierrors.Message("Resource group %q could not be found.", r.ResourceGroupName)
 	} else if err != nil {
@@ -162,13 +162,16 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	envProperties := &corerp.EnvironmentProperties{
-		Compute: &corerp.KubernetesCompute{
-			Namespace: to.Ptr(r.Namespace),
+	resource := &corerp.EnvironmentResource{
+		Location: to.Ptr(v1.LocationGlobal),
+		Properties: &corerp.EnvironmentProperties{
+			Compute: &corerp.KubernetesCompute{
+				Namespace: to.Ptr(r.Namespace),
+			},
 		},
 	}
 
-	err = client.CreateEnvironment(ctx, r.EnvironmentName, v1.LocationGlobal, envProperties)
+	err = client.CreateOrUpdateEnvironment(ctx, r.EnvironmentName, resource)
 	if err != nil {
 		return err
 	}

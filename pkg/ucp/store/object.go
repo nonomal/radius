@@ -18,15 +18,14 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 )
 
 type ETag = string
 
 type Metadata struct {
-	ID          string
-	ETag        ETag
-	APIVersion  string
-	ContentType string
+	ID   string
+	ETag ETag
 }
 
 type Object struct {
@@ -34,6 +33,28 @@ type Object struct {
 
 	// Data is the payload of the object. It will be marshaled to and from JSON for storage.
 	Data any
+}
+
+// DeepCopy creates a deep copy of the Object instance.
+func (o *Object) DeepCopy() (*Object, error) {
+	var data any
+	if o.Data != nil {
+		b, err := json.Marshal(o.Data)
+		if err != nil {
+			return nil, err
+		}
+
+		err = json.Unmarshal(b, &data)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &Object{
+		// Metadata is copied by value.
+		Metadata: o.Metadata,
+		Data:     data,
+	}, nil
 }
 
 // ObjectQueryResult represents the result of Query().

@@ -56,6 +56,12 @@ func Test_RequireResourceType(t *testing.T) {
 			wantErr: nil,
 		},
 		{
+			name:    "Fully-qualified resource type",
+			args:    []string{"Applications.Test/exampleResources"},
+			want:    "Applications.Test/exampleResources",
+			wantErr: nil,
+		},
+		{
 			name:    "Multiple resource types",
 			args:    []string{"secretStores"},
 			want:    "",
@@ -65,7 +71,7 @@ func Test_RequireResourceType(t *testing.T) {
 			name:    "Unsupported resource type",
 			args:    []string{"unsupported"},
 			want:    "",
-			wantErr: fmt.Errorf("'unsupported' is not a valid resource type. Available Types are: \n\n" + resourceTypesErrorString + "\n"),
+			wantErr: fmt.Errorf("'unsupported' is not a valid resource type. Available Types are: \n\n%s\n", resourceTypesErrorString),
 		},
 	}
 

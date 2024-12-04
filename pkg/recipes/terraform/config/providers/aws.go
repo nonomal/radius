@@ -21,6 +21,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+	ucp_datamodel "github.com/radius-project/radius/pkg/ucp/datamodel"
+
 	"github.com/radius-project/radius/pkg/azure/tokencredentials"
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/recipes"
@@ -41,6 +44,17 @@ const (
 	awsRegionParam    = "region"
 	awsAccessKeyParam = "access_key"
 	awsSecretKeyParam = "secret_key"
+
+	// configs for AWS IRSA
+	// Ref: https://registry.terraform.io/providers/hashicorp/aws/latest/docs#assuming-an-iam-role-using-a-web-identity
+	awsIRSAProvider = "assume_role_with_web_identity"
+	awsRoleARN      = "role_arn"
+	sessionName     = "session_name"
+	tokenFile       = "web_identity_token_file"
+	// The path used in Amazon Elastic Kubernetes Service (EKS) to store the service account token for a Kubernetes pod.
+	// Ref: https://docs.aws.amazon.com/eks/latest/userguide/pod-configuration.html
+	tokenFilePath = "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+	sessionPrefix = "radius-terraform-"
 )
 
 var _ Provider = (*awsProvider)(nil)
@@ -118,9 +132,17 @@ func fetchAWSCredentials(ctx context.Context, awsCredentialsProvider credentials
 		return nil, err
 	}
 
-	if credentials == nil || credentials.AccessKeyID == "" || credentials.SecretAccessKey == "" {
-		logger.Info("AWS credentials are not registered, skipping credentials configuration.")
-		return nil, nil
+	switch credentials.Kind {
+	case ucp_datamodel.AWSAccessKeyCredentialKind:
+		if credentials.AccessKeyCredential == nil || credentials.AccessKeyCredential.AccessKeyID == "" || credentials.AccessKeyCredential.SecretAccessKey == "" {
+			logger.Info("AWS AccessKey credentials are not registered, skipping credentials configuration.")
+			return nil, nil
+		}
+	case ucp_datamodel.AWSIRSACredentialKind:
+		if credentials.IRSACredential == nil || credentials.IRSACredential.RoleARN == "" {
+			logger.Info("AWS IRSA credentials are not registered, skipping credentials configuration.")
+			return nil, nil
+		}
 	}
 
 	return credentials, nil
@@ -132,9 +154,24 @@ func (p *awsProvider) generateProviderConfigMap(credentials *credentials.AWSCred
 		config[awsRegionParam] = region
 	}
 
-	if credentials != nil && credentials.AccessKeyID != "" && credentials.SecretAccessKey != "" {
-		config[awsAccessKeyParam] = credentials.AccessKeyID
-		config[awsSecretKeyParam] = credentials.SecretAccessKey
+	if credentials != nil {
+		switch credentials.Kind {
+		case ucp_datamodel.AWSAccessKeyCredentialKind:
+			if credentials.AccessKeyCredential != nil &&
+				credentials.AccessKeyCredential.AccessKeyID != "" && credentials.AccessKeyCredential.SecretAccessKey != "" {
+				config[awsAccessKeyParam] = credentials.AccessKeyCredential.AccessKeyID
+				config[awsSecretKeyParam] = credentials.AccessKeyCredential.SecretAccessKey
+			}
+
+		case ucp_datamodel.AWSIRSACredentialKind:
+			if credentials.IRSACredential != nil && credentials.IRSACredential.RoleARN != "" {
+				config[awsIRSAProvider] = map[string]any{
+					awsRoleARN:  credentials.IRSACredential.RoleARN,
+					sessionName: sessionPrefix + uuid.New().String(),
+					tokenFile:   tokenFilePath,
+				}
+			}
+		}
 	}
 
 	return config

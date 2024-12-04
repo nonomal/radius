@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -117,7 +118,6 @@ func Test_NewConfig(t *testing.T) {
 		desc               string
 		moduleName         string
 		envdef             *recipes.EnvironmentDefinition
-		envConfig          *recipes.Configuration
 		metadata           *recipes.ResourceMetadata
 		expectedConfigFile string
 	}{
@@ -175,52 +175,22 @@ func Test_NewConfig(t *testing.T) {
 			},
 			expectedConfigFile: "testdata/module-emptytemplateversion.tf.json",
 		},
-		{
-			desc:       "git private repo module",
-			moduleName: testRecipeName,
-			envdef: &recipes.EnvironmentDefinition{
-				Name:         testRecipeName,
-				TemplatePath: "git::https://dev.azure.com/project/module",
-				Parameters:   envParams,
-			},
-			envConfig: &recipes.Configuration{
-				RecipeConfig: datamodel.RecipeConfigProperties{
-					Terraform: datamodel.TerraformConfigProperties{
-						Authentication: datamodel.AuthConfig{
-							Git: datamodel.GitAuthConfig{
-								PAT: map[string]datamodel.SecretConfig{
-									"dev.azure.com": {
-										Secret: "secret-store1",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			metadata: &recipes.ResourceMetadata{
-				Name:          testRecipeName,
-				Parameters:    resourceParams,
-				EnvironmentID: "/planes/radius/local/resourceGroups/test-group/providers/Applications.Environments/testEnv/env",
-				ApplicationID: "/planes/radius/local/resourceGroups/test-group/providers/Applications.Applications/testApp/app",
-				ResourceID:    "/planes/radius/local/resourceGroups/test-group/providers/Applications.Datastores/redisCaches/redis",
-			},
-			expectedConfigFile: "testdata/module-private-git-repo.tf.json",
-		},
 	}
 
 	for _, tc := range configTests {
 		t.Run(tc.desc, func(t *testing.T) {
 			workingDir := t.TempDir()
 
-			tfconfig, err := New(context.Background(), testRecipeName, tc.envdef, tc.metadata, tc.envConfig)
+			tfconfig, err := New(context.Background(), testRecipeName, tc.envdef, tc.metadata)
 			require.NoError(t, err)
 
 			// validate generated config
 			err = tfconfig.Save(testcontext.New(t), workingDir)
 			require.NoError(t, err)
+
 			actualConfig, err := os.ReadFile(getMainConfigFilePath(workingDir))
 			require.NoError(t, err)
+
 			expectedConfig, err := os.ReadFile(tc.expectedConfigFile)
 			require.NoError(t, err)
 			require.Equal(t, string(expectedConfig), string(actualConfig))
@@ -307,7 +277,7 @@ func Test_AddRecipeContext(t *testing.T) {
 			ctx := testcontext.New(t)
 			workingDir := t.TempDir()
 
-			tfconfig, err := New(context.Background(), testRecipeName, tc.envdef, tc.metadata, nil)
+			tfconfig, err := New(context.Background(), testRecipeName, tc.envdef, tc.metadata)
 			require.NoError(t, err)
 			err = tfconfig.AddRecipeContext(ctx, tc.moduleName, tc.recipeContext)
 			if tc.err == "" {
@@ -323,8 +293,10 @@ func Test_AddRecipeContext(t *testing.T) {
 			// validate generated config
 			actualConfig, err := os.ReadFile(getMainConfigFilePath(workingDir))
 			require.NoError(t, err)
+
 			expectedConfig, err := os.ReadFile(tc.expectedConfigFile)
 			require.NoError(t, err)
+
 			require.Equal(t, string(expectedConfig), string(actualConfig))
 		})
 	}
@@ -344,8 +316,9 @@ func Test_AddProviders(t *testing.T) {
 	configTests := []struct {
 		desc                           string
 		envConfig                      recipes.Configuration
-		requiredProviders              []string
+		requiredProviders              map[string]*RequiredProviderInfo
 		expectedUCPConfiguredProviders []map[string]any
+		useUCPProviderConfig           bool
 		expectedConfigFile             string
 		Err                            error
 	}{
@@ -374,13 +347,14 @@ func Test_AddProviders(t *testing.T) {
 					},
 				},
 			},
-			requiredProviders: []string{
-				providers.AWSProviderName,
-				providers.AzureProviderName,
-				providers.KubernetesProviderName,
-				"sql",
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName:        {},
+				providers.AzureProviderName:      {},
+				providers.KubernetesProviderName: {},
+				"sql":                            {},
 			},
-			expectedConfigFile: "testdata/providers-valid.tf.json",
+			useUCPProviderConfig: true,
+			expectedConfigFile:   "testdata/providers-valid.tf.json",
 		},
 		{
 			desc:                           "invalid aws scope",
@@ -393,21 +367,26 @@ func Test_AddProviders(t *testing.T) {
 					},
 				},
 			},
-			requiredProviders: []string{
-				providers.AWSProviderName,
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:  "hashicorp/aws",
+					Version: ">= 3.0",
+				},
 			},
+			useUCPProviderConfig: true,
 		},
 		{
-			desc: "empty aws provider config",
+			desc: "empty aws provider config with required provider",
 			expectedUCPConfiguredProviders: []map[string]any{
 				{},
 			},
 			Err:       nil,
 			envConfig: recipes.Configuration{},
-			requiredProviders: []string{
-				providers.AWSProviderName,
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {},
 			},
-			expectedConfigFile: "testdata/providers-empty.tf.json",
+			useUCPProviderConfig: true,
+			expectedConfigFile:   "testdata/providers-emptywithrequiredprovider.tf.json",
 		},
 		{
 			desc: "empty aws scope",
@@ -425,10 +404,11 @@ func Test_AddProviders(t *testing.T) {
 					},
 				},
 			},
-			requiredProviders: []string{
-				providers.AWSProviderName,
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {},
 			},
-			expectedConfigFile: "testdata/providers-empty.tf.json",
+			useUCPProviderConfig: true,
+			expectedConfigFile:   "testdata/providers-emptywithrequiredprovider.tf.json",
 		},
 		{
 			desc: "empty azure provider config",
@@ -439,10 +419,14 @@ func Test_AddProviders(t *testing.T) {
 			},
 			Err:       nil,
 			envConfig: recipes.Configuration{},
-			requiredProviders: []string{
-				providers.AzureProviderName,
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AzureProviderName: {
+					Source:  "hashicorp/azurerm",
+					Version: "~> 2.0",
+				},
 			},
-			expectedConfigFile: "testdata/providers-emptyazureconfig.tf.json",
+			useUCPProviderConfig: true,
+			expectedConfigFile:   "testdata/providers-emptyazureconfig.tf.json",
 		},
 		{
 			desc:                           "valid recipe providers in env config",
@@ -475,26 +459,39 @@ func Test_AddProviders(t *testing.T) {
 			expectedConfigFile: "testdata/providers-envrecipeproviders.tf.json",
 		},
 		{
-			desc: "recipe provider config overridding required provider configs",
+			desc: "recipe provider config overridding ucp provider configs",
 			expectedUCPConfiguredProviders: []map[string]any{
 				{
 					"region": "test-region",
 				},
+				{
+					"config_path": "/home/radius/.kube/UCPconfig",
+				},
 			},
-			Err: nil,
+			Err:                  nil,
+			useUCPProviderConfig: false,
 			envConfig: recipes.Configuration{
 				RecipeConfig: datamodel.RecipeConfigProperties{
 					Terraform: datamodel.TerraformConfigProperties{
 						Providers: map[string][]datamodel.ProviderConfigProperties{
+							"aws": {
+								{
+									AdditionalProperties: map[string]any{
+										"region": "us-west-2",
+									},
+								},
+							},
 							"kubernetes": {
 								{
 									AdditionalProperties: map[string]any{
-										"ConfigPath": "/home/radius/.kube/configPath1",
+										"alias":       "k8s_first",
+										"config_path": "/home/radius/.kube/configPath1",
 									},
 								},
 								{
 									AdditionalProperties: map[string]any{
-										"ConfigPath": "/home/radius/.kube/configPath2",
+										"alias":       "k8s_second",
+										"config_path": "/home/radius/.kube/configPath2",
 									},
 								},
 							},
@@ -502,11 +499,18 @@ func Test_AddProviders(t *testing.T) {
 					},
 				},
 			},
-			requiredProviders: []string{
-				providers.AWSProviderName,
-				providers.KubernetesProviderName,
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:  "hashicorp/aws",
+					Version: ">= 3.0",
+				},
+				providers.KubernetesProviderName: {
+					Source:               "hashicorp/kubernetes",
+					Version:              ">= 2.0",
+					ConfigurationAliases: []string{"kubernetes.k8s_first", "kubernetes.k8s_second"},
+				},
 			},
-			expectedConfigFile: "testdata/providers-overridereqproviders.tf.json",
+			expectedConfigFile: "testdata/providers-overrideucpproviderconfig.tf.json",
 		},
 		{
 			desc:                           "recipe providers in env config setup but nil",
@@ -579,15 +583,17 @@ func Test_AddProviders(t *testing.T) {
 			ctx := testcontext.New(t)
 			workingDir := t.TempDir()
 
-			tfconfig, err := New(ctx, testRecipeName, &envRecipe, &resourceRecipe, &tc.envConfig)
+			tfconfig, err := New(ctx, testRecipeName, &envRecipe, &resourceRecipe)
 			require.NoError(t, err)
-			for _, p := range tc.expectedUCPConfiguredProviders {
-				mProvider.EXPECT().BuildConfig(ctx, &tc.envConfig).Times(1).Return(p, nil)
+			if tc.useUCPProviderConfig {
+				for _, p := range tc.expectedUCPConfiguredProviders {
+					mProvider.EXPECT().BuildConfig(ctx, &tc.envConfig).Times(1).Return(p, nil)
+				}
 			}
 			if tc.Err != nil {
 				mProvider.EXPECT().BuildConfig(ctx, &tc.envConfig).Times(1).Return(nil, tc.Err)
 			}
-			err = tfconfig.AddProviders(ctx, tc.requiredProviders, ucpConfiguredProviders, &tc.envConfig)
+			err = tfconfig.AddProviders(ctx, tc.requiredProviders, ucpConfiguredProviders, &tc.envConfig, nil)
 			if tc.Err != nil {
 				require.ErrorContains(t, err, tc.Err.Error())
 				return
@@ -600,11 +606,35 @@ func Test_AddProviders(t *testing.T) {
 			require.NoError(t, err)
 
 			// assert
-			actualConfig, err := os.ReadFile(getMainConfigFilePath(workingDir))
+			var actualConfig, expectedConfig map[string]any
+
+			actualConfigBytes, err := os.ReadFile(getMainConfigFilePath(workingDir))
 			require.NoError(t, err)
-			expectedConfig, err := os.ReadFile(tc.expectedConfigFile)
+			err = json.Unmarshal(actualConfigBytes, &actualConfig)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedConfig), string(actualConfig))
+
+			expectedConfigBytes, err := os.ReadFile(tc.expectedConfigFile)
+			require.NoError(t, err)
+			err = json.Unmarshal(expectedConfigBytes, &expectedConfig)
+			require.NoError(t, err)
+
+			// For tests with multiple UCPConfigured providers and 'useUCPProviderConfig' set to true, we validate test based on count of provider configurations and matching provider names (keys).
+			if len(tc.expectedUCPConfiguredProviders) > 1 && tc.useUCPProviderConfig == true {
+
+				// The AddProviders function accepts a map of UCPConfigured providers. As maps in Go do not guarantee iteration order, the sequence of providers in the resulting configuration can vary.
+				// The mock call to BuildConfig() anticipates a specific provider configuration output in a fixed order.
+				// Due to potential discrepancies in order, a deep comparison of the two maps is not feasible. Instead, we compare the count and match keys of provider configurations.
+				expectedProviderMap := expectedConfig["provider"].(map[string]any)
+				actualProviderMap := actualConfig["provider"].(map[string]any)
+
+				require.Equal(t, len(expectedProviderMap), len(actualProviderMap))
+				for k := range expectedProviderMap {
+					require.Contains(t, actualProviderMap, k)
+				}
+			} else {
+				// This performs a deep comparison of the two maps.
+				require.Equal(t, expectedConfig, actualConfig)
+			}
 		})
 	}
 }
@@ -640,7 +670,7 @@ func Test_AddOutputs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
-			tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe, nil)
+			tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe)
 			require.NoError(t, err)
 
 			err = tfconfig.AddOutputs(tc.moduleName)
@@ -659,9 +689,261 @@ func Test_AddOutputs(t *testing.T) {
 			// Assert generated config file matches expected config in JSON format.
 			actualConfig, err := os.ReadFile(getMainConfigFilePath(workingDir))
 			require.NoError(t, err)
+
 			expectedConfig, err := os.ReadFile(tc.expectedConfigFile)
 			require.NoError(t, err)
+
 			require.Equal(t, string(expectedConfig), string(actualConfig))
+		})
+	}
+}
+
+func Test_updateModuleWithProviderAliases(t *testing.T) {
+	tests := []struct {
+		name               string
+		cfg                *TerraformConfig
+		expectedConfig     *TerraformConfig
+		requiredProviders  map[string]*RequiredProviderInfo
+		expectedConfigFile string
+		wantErr            bool
+	}{
+		{
+			name: "Test with valid provider config",
+			cfg: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+						{
+							"alias":  "alias2",
+							"region": "us-east-1",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:               "hashicorp/aws",
+					Version:              ">= 3.0",
+					ConfigurationAliases: []string{"aws.alias1", "aws.alias2"},
+				},
+			},
+			expectedConfig: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+						{
+							"alias":  "alias2",
+							"region": "us-east-1",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+						"providers": map[string]string{
+							"aws.alias1": "aws.alias1",
+							"aws.alias2": "aws.alias2",
+						},
+					},
+				},
+			},
+			expectedConfigFile: "testdata/providers-modules-aliases.tf.json",
+			wantErr:            false,
+		},
+		{
+			name: "Test with subset of required_provider aliases in provider config",
+			cfg: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:               "hashicorp/aws",
+					Version:              ">= 3.0",
+					ConfigurationAliases: []string{"aws.alias1", "aws.alias2"},
+				},
+			},
+			expectedConfig: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+						"providers": map[string]string{
+							"aws.alias1": "aws.alias1",
+						},
+					},
+				},
+			},
+			expectedConfigFile: "testdata/providers-modules-subsetaliases.tf.json",
+			wantErr:            false,
+		},
+		{
+			name: "Test with unmatched required_provider aliases in provider config",
+			cfg: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"region": "us-west-2",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:               "hashicorp/aws",
+					Version:              ">= 3.0",
+					ConfigurationAliases: []string{"aws.alias1"},
+				},
+			},
+			expectedConfig: &TerraformConfig{
+				Provider: nil,
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			expectedConfigFile: "testdata/providers-modules-unmatchedaliases.tf.json",
+			wantErr:            false,
+		},
+		{
+			name: "Test with no required_provider aliases",
+			cfg: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			requiredProviders: map[string]*RequiredProviderInfo{
+				providers.AWSProviderName: {
+					Source:  "hashicorp/aws",
+					Version: ">= 3.0",
+				},
+			},
+			expectedConfig: &TerraformConfig{
+				Provider: map[string][]map[string]any{
+					"aws": {
+						{
+							"alias":  "alias1",
+							"region": "us-west-2",
+						},
+					},
+				},
+				Module: map[string]TFModuleConfig{
+					"redis-azure": map[string]any{
+						"redis_cache_name":    "redis-test",
+						"resource_group_name": "test-rg",
+						"sku":                 "P",
+						"source":              "Azure/redis/azurerm",
+						"version":             "1.1.0",
+					},
+				},
+			},
+			expectedConfigFile: "testdata/providers-modules-noaliases.tf.json",
+			wantErr:            false,
+		},
+		{
+			name:              "TerraformConfig is nil",
+			requiredProviders: nil,
+			cfg:               nil,
+			wantErr:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testcontext.New(t)
+			err := tt.cfg.updateModuleWithProviderAliases(tt.requiredProviders)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			workingDir := t.TempDir()
+			err = tt.cfg.Save(ctx, workingDir)
+			require.NoError(t, err)
+
+			// Assert generated config file matches expected config in JSON format.
+			actualConfig, err := os.ReadFile(getMainConfigFilePath(workingDir))
+			require.NoError(t, err)
+
+			if tt.wantErr != true {
+				expectedConfig, err := os.ReadFile(tt.expectedConfigFile)
+				require.NoError(t, err)
+				require.Equal(t, string(expectedConfig), string(actualConfig))
+			}
 		})
 	}
 }
@@ -670,7 +952,7 @@ func Test_Save_overwrite(t *testing.T) {
 	ctx := testcontext.New(t)
 	testDir := t.TempDir()
 	envRecipe, resourceRecipe := getTestInputs()
-	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe, nil)
+	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe)
 	require.NoError(t, err)
 
 	err = tfconfig.Save(ctx, testDir)
@@ -683,7 +965,7 @@ func Test_Save_overwrite(t *testing.T) {
 func Test_Save_ConfigFileReadOnly(t *testing.T) {
 	testDir := t.TempDir()
 	envRecipe, resourceRecipe := getTestInputs()
-	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe, nil)
+	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe)
 	require.NoError(t, err)
 
 	// Create a test configuration file with read only permission.
@@ -700,7 +982,7 @@ func Test_Save_InvalidWorkingDir(t *testing.T) {
 	testDir := filepath.Join("invalid", uuid.New().String())
 	envRecipe, resourceRecipe := getTestInputs()
 
-	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe, nil)
+	tfconfig, err := New(context.Background(), testRecipeName, &envRecipe, &resourceRecipe)
 	require.NoError(t, err)
 
 	err = tfconfig.Save(testcontext.New(t), testDir)

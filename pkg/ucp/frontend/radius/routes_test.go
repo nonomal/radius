@@ -25,6 +25,7 @@ import (
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	"github.com/radius-project/radius/pkg/armrpc/rpctest"
 	"github.com/radius-project/radius/pkg/ucp/api/v20231001preview"
+	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/dataprovider"
 	"github.com/radius-project/radius/pkg/ucp/frontend/modules"
 	"github.com/radius-project/radius/pkg/ucp/hostoptions"
@@ -37,26 +38,139 @@ const pathBase = "/some-path-base"
 
 func Test_Routes(t *testing.T) {
 	tests := []rpctest.HandlerTestSpec{
+		// Radius plane
 		{
-			OperationType: v1.OperationType{Type: "System.Radius/planes", Method: v1.OperationList},
+			OperationType: v1.OperationType{Type: datamodel.RadiusPlaneResourceType, Method: v1.OperationList},
 			Method:        http.MethodGet,
 			Path:          "/planes/radius",
 		},
 		{
-			OperationType: v1.OperationType{Type: "System.Radius/planes", Method: v1.OperationGet},
+			OperationType: v1.OperationType{Type: datamodel.RadiusPlaneResourceType, Method: v1.OperationGet},
 			Method:        http.MethodGet,
 			Path:          "/planes/radius/someName",
 		},
 		{
-			OperationType: v1.OperationType{Type: "System.Radius/planes", Method: v1.OperationPut},
+			OperationType: v1.OperationType{Type: datamodel.RadiusPlaneResourceType, Method: v1.OperationPut},
 			Method:        http.MethodPut,
 			Path:          "/planes/radius/someName",
 		},
 		{
-			OperationType: v1.OperationType{Type: "System.Radius/planes", Method: v1.OperationDelete},
+			OperationType: v1.OperationType{Type: datamodel.RadiusPlaneResourceType, Method: v1.OperationDelete},
 			Method:        http.MethodDelete,
 			Path:          "/planes/radius/someName",
 		},
+
+		// Resource types
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceProviderResourceType, Method: v1.OperationList},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceProviderResourceType, Method: v1.OperationGet},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceProviderResourceType, Method: v1.OperationPut},
+			Method:        http.MethodPut,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceProviderResourceType, Method: v1.OperationDelete},
+			Method:        http.MethodDelete,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.LocationResourceType, Method: v1.OperationList},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/locations",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.LocationResourceType, Method: v1.OperationGet},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/locations/east",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.LocationResourceType, Method: v1.OperationPut},
+			Method:        http.MethodPut,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/locations/east",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.LocationResourceType, Method: v1.OperationDelete},
+			Method:        http.MethodDelete,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/locations/east",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceTypeResourceType, Method: v1.OperationList},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceTypeResourceType, Method: v1.OperationGet},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceTypeResourceType, Method: v1.OperationPut},
+			Method:        http.MethodPut,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.ResourceTypeResourceType, Method: v1.OperationDelete},
+			Method:        http.MethodDelete,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.APIVersionResourceType, Method: v1.OperationList},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources/apiversions",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.APIVersionResourceType, Method: v1.OperationGet},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources/apiversions/2025-01-01",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.APIVersionResourceType, Method: v1.OperationPut},
+			Method:        http.MethodPut,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources/apiversions/2025-01-01",
+		},
+		{
+			OperationType: v1.OperationType{Type: datamodel.APIVersionResourceType, Method: v1.OperationDelete},
+			Method:        http.MethodDelete,
+			Path:          "/planes/radius/someName/providers/System.Resources/resourceproviders/Applications.Test/resourcetypes/testResources/apiversions/2025-01-01",
+		},
+
+		// Resource groups
+		{
+			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationList},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/local/resourcegroups",
+		},
+		{
+			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationGet},
+			Method:        http.MethodGet,
+			Path:          "/planes/radius/local/resourcegroups/test-rg",
+		},
+		{
+			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationPut},
+			Method:        http.MethodPut,
+			Path:          "/planes/radius/local/resourcegroups/test-rg",
+		},
+		{
+			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationDelete},
+			Method:        http.MethodDelete,
+			Path:          "/planes/radius/local/resourcegroups/test-rg",
+		},
+		{
+			OperationType:               v1.OperationType{Type: OperationTypeUCPRadiusProxy, Method: v1.OperationProxy},
+			Method:                      http.MethodGet,
+			Path:                        "/planes/radius/local/providers/applications.core/applications/test-app",
+			SkipOperationTypeValidation: true,
+		},
+
+		// Proxy
 		{
 			OperationType:               v1.OperationType{Type: OperationTypeUCPRadiusProxy, Method: v1.OperationProxy},
 			Method:                      http.MethodGet,
@@ -66,27 +180,6 @@ func Test_Routes(t *testing.T) {
 			OperationType:               v1.OperationType{Type: OperationTypeUCPRadiusProxy, Method: v1.OperationProxy},
 			Method:                      http.MethodPut,
 			Path:                        "/planes/radius/local/resourcegroups/test-rg/providers/applications.core/applications/test-app",
-			SkipOperationTypeValidation: true,
-		}, {
-			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationList},
-			Method:        http.MethodGet,
-			Path:          "/planes/radius/local/resourcegroups",
-		}, {
-			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationGet},
-			Method:        http.MethodGet,
-			Path:          "/planes/radius/local/resourcegroups/test-rg",
-		}, {
-			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationPut},
-			Method:        http.MethodPut,
-			Path:          "/planes/radius/local/resourcegroups/test-rg",
-		}, {
-			OperationType: v1.OperationType{Type: v20231001preview.ResourceGroupType, Method: v1.OperationDelete},
-			Method:        http.MethodDelete,
-			Path:          "/planes/radius/local/resourcegroups/test-rg",
-		}, {
-			OperationType:               v1.OperationType{Type: OperationTypeUCPRadiusProxy, Method: v1.OperationProxy},
-			Method:                      http.MethodGet,
-			Path:                        "/planes/radius/local/providers/applications.core/applications/test-app",
 			SkipOperationTypeValidation: true,
 		},
 	}

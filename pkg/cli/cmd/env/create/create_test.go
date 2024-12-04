@@ -146,6 +146,15 @@ func Test_Validate(t *testing.T) {
 				Config:         configWithWorkspace,
 			},
 		},
+		{
+			Name:          "Create command with extra positional arg",
+			Input:         []string{"a", "b"},
+			ExpectedValid: false,
+			ConfigHolder: framework.ConfigHolder{
+				ConfigFilePath: "",
+				Config:         configWithWorkspace,
+			},
+		},
 	}
 	radcli.SharedValidateValidation(t, NewCommand, testcases)
 }
@@ -162,7 +171,10 @@ func Test_Run(t *testing.T) {
 			},
 		}
 		appManagementClient.EXPECT().
-			CreateEnvironment(context.Background(), "default", v1.LocationGlobal, testEnvProperties).
+			CreateOrUpdateEnvironment(context.Background(), "default", &corerp.EnvironmentResource{
+				Location:   to.Ptr(v1.LocationGlobal),
+				Properties: testEnvProperties,
+			}).
 			Return(nil).Times(1)
 
 		configFileInterface := framework.NewMockConfigFileInterface(ctrl)
@@ -220,7 +232,10 @@ func Test_Run(t *testing.T) {
 		expectedError := errors.New("failed to create the environment")
 
 		appManagementClient.EXPECT().
-			CreateEnvironment(context.Background(), "default", v1.LocationGlobal, testEnvProperties).
+			CreateOrUpdateEnvironment(context.Background(), "default", &corerp.EnvironmentResource{
+				Location:   to.Ptr(v1.LocationGlobal),
+				Properties: testEnvProperties,
+			}).
 			Return(expectedError).
 			Times(1)
 
@@ -283,13 +298,13 @@ func createValidateNamespaceError(namespaceClient *namespace.MockInterface) {
 
 func createShowUCPSuccess(appManagementClient *clients.MockApplicationsManagementClient, testResourceGroup v20231001preview.ResourceGroupResource) {
 	appManagementClient.EXPECT().
-		ShowUCPGroup(gomock.Any(), gomock.Any(), "test-resource-group").
+		GetResourceGroup(gomock.Any(), gomock.Any(), "test-resource-group").
 		Return(testResourceGroup, nil).Times(1)
 }
 
 func createShowUCPError(appManagementClient *clients.MockApplicationsManagementClient, testResourceGroup v20231001preview.ResourceGroupResource) {
 	appManagementClient.EXPECT().
-		ShowUCPGroup(gomock.Any(), gomock.Any(), "invalidresourcegroup").
+		GetResourceGroup(gomock.Any(), gomock.Any(), "invalidresourcegroup").
 		Return(testResourceGroup, clierrors.Message("The resource group %q could not be found.", "invalidresourcegroup")).Times(1)
 
 }

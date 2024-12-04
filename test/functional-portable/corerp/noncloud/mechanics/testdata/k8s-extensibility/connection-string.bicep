@@ -1,7 +1,7 @@
-import kubernetes as kubernetes {
+extension kubernetes with {
   namespace: 'corerp-mechanics-k8s-extensibility'
   kubeConfig: ''
-}
+} as kubernetes
 
 resource redisService 'core/Service@v1' existing = {
   metadata: {
@@ -23,6 +23,9 @@ resource secret 'core/Secret@v1' = {
     namespace: 'corerp-mechanics-k8s-extensibility'
     labels: {
       format: 'k8s-extension'
+    }
+    annotations: {
+      testAnnotation: 'testAnnotation'
     }
   }
 

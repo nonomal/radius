@@ -38,7 +38,8 @@ using OpenAPI;
 namespace Applications.Datastores;
 
 @doc("MongoDatabase portable resource")
-model MongoDatabaseResource is TrackedResourceRequired<MongoDatabaseProperties, "mongoDatabases">{
+model MongoDatabaseResource
+  is TrackedResourceRequired<MongoDatabaseProperties, "mongoDatabases"> {
   @doc("The name of the MongoDatabase portable resource resource")
   @path
   @segment("mongoDatabases")
@@ -102,7 +103,7 @@ interface MongoDatabases {
     UCPBaseParameters<MongoDatabaseResource>
   >;
 
-  delete is ArmResourceDeleteAsync<
+  delete is ArmResourceDeleteWithoutOkAsync<
     MongoDatabaseResource,
     UCPBaseParameters<MongoDatabaseResource>
   >;

@@ -25,9 +25,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-logr/logr"
@@ -43,6 +45,7 @@ import (
 	"github.com/radius-project/radius/pkg/armrpc/rpctest"
 	"github.com/radius-project/radius/pkg/armrpc/servicecontext"
 	"github.com/radius-project/radius/pkg/middleware"
+	"github.com/radius-project/radius/pkg/sdk"
 	"github.com/radius-project/radius/pkg/ucp/backend"
 	"github.com/radius-project/radius/pkg/ucp/data"
 	"github.com/radius-project/radius/pkg/ucp/dataprovider"
@@ -279,18 +282,6 @@ func StartWithETCD(t *testing.T, configureModules func(options modules.Options) 
 	queueClient, err := queueProvider.GetClient(ctx)
 	require.NoError(t, err)
 
-	statusManager := statusmanager.New(dataProvider, queueClient, v1.LocationGlobal)
-
-	registry := worker.NewControllerRegistry(dataProvider)
-	err = backend.RegisterControllers(ctx, registry, backend_ctrl.Options{DataProvider: dataProvider})
-	require.NoError(t, err)
-
-	w := worker.New(worker.Options{}, statusManager, queueClient, registry)
-	go func() {
-		err = w.Start(ctx)
-		require.NoError(t, err)
-	}()
-
 	router := chi.NewRouter()
 	router.Use(servicecontext.ARMRequestCtx(pathBase, "global"))
 
@@ -300,11 +291,18 @@ func StartWithETCD(t *testing.T, configureModules func(options modules.Options) 
 		return ctx
 	}
 
+	// Unfortunately the server doesn't populate 'server.URL' until it is started, so we have to build it ourselves.
+	address := "http://" + server.Listener.Addr().String()
+	connection, err := sdk.NewDirectConnection(address + pathBase)
+	require.NoError(t, err)
+
+	statusManager := statusmanager.New(dataProvider, queueClient, v1.LocationGlobal)
+
 	specLoader, err := validator.LoadSpec(ctx, "ucp", swagger.SpecFilesUCP, []string{pathBase}, "")
 	require.NoError(t, err, "failed to load OpenAPI spec")
 
 	options := modules.Options{
-		Address:        server.URL,
+		Address:        address,
 		PathBase:       pathBase,
 		Config:         &hostoptions.UCPConfig{},
 		DataProvider:   dataProvider,
@@ -319,6 +317,25 @@ func StartWithETCD(t *testing.T, configureModules func(options modules.Options) 
 	}
 
 	modules := configureModules(options)
+
+	// The URL for the dynamic-rp needs to be specified in configuration, however not all of our tests
+	// need to use the dynamic-rp. We can just use a placeholder value here.
+	if options.Config.Routing.DefaultDownstreamEndpoint == "" {
+		options.Config.Routing.DefaultDownstreamEndpoint = "http://localhost:65535"
+	}
+
+	defaultDownstream, err := url.Parse(options.Config.Routing.DefaultDownstreamEndpoint)
+	require.NoError(t, err)
+
+	registry := worker.NewControllerRegistry(dataProvider)
+	err = backend.RegisterControllers(ctx, registry, connection, http.DefaultTransport, backend_ctrl.Options{DataProvider: dataProvider}, defaultDownstream)
+	require.NoError(t, err)
+
+	w := worker.New(worker.Options{}, statusManager, queueClient, registry)
+	go func() {
+		err = w.Start(ctx)
+		require.NoError(t, err)
+	}()
 
 	err = api.Register(ctx, router, modules, options)
 	require.NoError(t, err)
@@ -358,10 +375,11 @@ func StartWithETCD(t *testing.T, configureModules func(options modules.Options) 
 // TestResponse is return from requests made against a TestServer. Tests should use the functions defined
 // on TestResponse for valiation.
 type TestResponse struct {
-	Raw   *http.Response
-	Body  *bytes.Buffer
-	Error *v1.ErrorResponse
-	t     *testing.T
+	Raw    *http.Response
+	Body   *bytes.Buffer
+	Error  *v1.ErrorResponse
+	t      *testing.T
+	server *TestServer
 }
 
 // MakeFixtureRequest sends a request to the server using a file on disk as the payload (body). Use the fixture
@@ -385,8 +403,16 @@ func (ts *TestServer) MakeTypedRequest(method string, pathAndQuery string, body 
 
 // MakeRequest sends a request to the server.
 func (ts *TestServer) MakeRequest(method string, pathAndQuery string, body []byte) *TestResponse {
+	// Prepend the base path if this is a relative URL.
+	requestUrl := pathAndQuery
+	parsed, err := url.Parse(pathAndQuery)
+	require.NoError(ts.t, err, "parsing URL failed")
+	if !parsed.IsAbs() {
+		requestUrl = ts.BaseURL + pathAndQuery
+	}
+
 	client := ts.Server.Client()
-	request, err := rpctest.NewHTTPRequestWithContent(context.Background(), method, ts.BaseURL+pathAndQuery, body)
+	request, err := rpctest.NewHTTPRequestWithContent(context.Background(), method, requestUrl, body)
 	require.NoError(ts.t, err, "creating request failed")
 
 	ctx := rpctest.NewARMRequestContext(request)
@@ -422,7 +448,7 @@ func (ts *TestServer) MakeRequest(method string, pathAndQuery string, body []byt
 		require.NoError(ts.t, err, "unmarshalling error response failed - THIS IS A SERIOUS BUG. ALL ERROR RESPONSES MUST USE THE STANDARD FORMAT")
 	}
 
-	return &TestResponse{Raw: response, Body: responseBuffer, Error: errorResponse, t: ts.t}
+	return &TestResponse{Raw: response, Body: responseBuffer, Error: errorResponse, server: ts, t: ts.t}
 }
 
 // EqualsErrorCode compares a TestResponse against an expected status code and error code. EqualsErrorCode assumes the response
@@ -466,6 +492,91 @@ func (tr *TestResponse) EqualsResponse(statusCode int, body []byte) {
 	require.NoError(tr.t, err, "unmarshalling actual response failed")
 	require.EqualValues(tr.t, expected, actual, "response body did not match expected")
 	require.Equal(tr.t, statusCode, tr.Raw.StatusCode, "status code did not match expected")
+}
+
+// EqualsValue compares a TestResponse against an expected status code and an response body.
+//
+// If the systemData propert is present in the response, it will be removed.
+func (tr *TestResponse) EqualsValue(statusCode int, expected any) {
+	var actual map[string]any
+	err := json.Unmarshal(tr.Body.Bytes(), &actual)
+	require.NoError(tr.t, err, "unmarshalling actual response failed")
+
+	// Convert expected input to map[string]any to compare with actual response.
+	expectedBytes, err := json.Marshal(expected)
+	require.NoError(tr.t, err, "marshalling expected response failed")
+
+	var expectedMap map[string]any
+	err = json.Unmarshal(expectedBytes, &expectedMap)
+	require.NoError(tr.t, err, "unmarshalling expected response failed")
+
+	tr.removeSystemData(expectedMap)
+	tr.removeSystemData(actual)
+
+	require.EqualValues(tr.t, expectedMap, actual, "response body did not match expected")
+	require.Equal(tr.t, statusCode, tr.Raw.StatusCode, "status code did not match expected")
+}
+
+// EqualsEmptyList compares a TestResponse against an expected status code and an empty resource list.
+func (tr *TestResponse) EqualsEmptyList() {
+	expected := map[string]any{
+		"value": []any{},
+	}
+
+	var actual map[string]any
+	err := json.Unmarshal(tr.Body.Bytes(), &actual)
+
+	tr.removeSystemData(actual)
+
+	require.NoError(tr.t, err, "unmarshalling actual response failed")
+	require.EqualValues(tr.t, expected, actual, "response body did not match expected")
+	require.Equal(tr.t, http.StatusOK, tr.Raw.StatusCode, "status code did not match expected")
+}
+
+func (tr *TestResponse) ReadAs(obj any) {
+	tr.t.Helper()
+
+	decoder := json.NewDecoder(tr.Body)
+	decoder.DisallowUnknownFields()
+
+	err := decoder.Decode(obj)
+	require.NoError(tr.t, err, "unmarshalling expected response failed")
+}
+
+func (tr *TestResponse) WaitForOperationComplete(timeout *time.Duration) *TestResponse {
+	if tr.Raw.StatusCode != http.StatusCreated && tr.Raw.StatusCode != http.StatusAccepted {
+		// Response is already terminal.
+		return tr
+	}
+
+	if timeout == nil {
+		x := 30 * time.Second
+		timeout = &x
+	}
+
+	timer := time.After(*timeout)
+	poller := time.NewTicker(1 * time.Second)
+	defer poller.Stop()
+	for {
+		select {
+		case <-timer:
+			tr.t.Fatalf("timed out waiting for operation to complete")
+			return nil // unreachable
+		case <-poller.C:
+			// The Location header should give us the operation status URL.
+			response := tr.server.MakeRequest(http.MethodGet, tr.Raw.Header.Get("Azure-AsyncOperation"), nil)
+			// To determine if the response is terminal we need to read the provisioning state field.
+
+			operationStatus := v1.AsyncOperationStatus{}
+			response.ReadAs(&operationStatus)
+			if operationStatus.Status.IsTerminal() {
+				// Response is terminal.
+				return response
+			}
+
+			continue
+		}
+	}
 }
 
 func (tr *TestResponse) removeSystemData(responseBody map[string]any) {

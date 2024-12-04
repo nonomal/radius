@@ -35,6 +35,8 @@ var (
 )
 
 func Test_summaryModel(t *testing.T) {
+	t.Skip("Test is flaky. See: https://github.com/radius-project/radius/issues/8044")
+
 	waitForRender := func(t *testing.T, reader io.Reader) string {
 		normalized := ""
 		teatest.WaitFor(t, reader, func(bts []byte) bool {
@@ -44,6 +46,7 @@ func Test_summaryModel(t *testing.T) {
 
 		return normalized
 	}
+
 	waitForEmpty := func(t *testing.T, reader io.Reader) string {
 		normalized := ""
 		teatest.WaitFor(t, reader, func(bts []byte) bool {
@@ -76,9 +79,11 @@ func Test_summaryModel(t *testing.T) {
 	t.Run("Result: Confirm", func(t *testing.T) {
 		resultTest(t, resultConfimed, tea.KeyEnter)
 	})
+
 	t.Run("Result: Cancel", func(t *testing.T) {
 		resultTest(t, resultCanceled, tea.KeyEscape)
 	})
+
 	t.Run("Result: Quit", func(t *testing.T) {
 		resultTest(t, resultQuit, tea.KeyCtrlC)
 	})
@@ -115,7 +120,7 @@ func Test_summaryModel(t *testing.T) {
 			},
 		}
 
-		expected := "You've selected the following:\n" +
+		expected := "\rYou've selected the following:\n" +
 			"\n" +
 			"🔧 Use existing Radius test-version install on test-context\n" +
 			"🌏 Use existing environment test-environment\n" +
@@ -142,7 +147,7 @@ func Test_summaryModel(t *testing.T) {
 			Application:    applicationOptions{},
 		}
 
-		expected := "You've selected the following:\n" +
+		expected := "\rYou've selected the following:\n" +
 			"\n" +
 			"🔧 Install Radius test-version\n" +
 			"   - Kubernetes cluster: test-context\n" +

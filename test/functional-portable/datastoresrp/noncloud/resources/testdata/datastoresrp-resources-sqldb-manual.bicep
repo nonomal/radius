@@ -1,4 +1,4 @@
-import radius as radius
+extension radius
 
 @description('Specifies the location for resources.')
 param location string = 'global'
@@ -46,7 +46,9 @@ resource webapp 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: magpieImage
       env: {
-        CONNECTION_SQL_CONNECTIONSTRING: db.connectionString()
+        CONNECTION_SQL_CONNECTIONSTRING: {
+          value: db.listSecrets().connectionString
+        }
       }
       readinessProbe: {
         kind: 'httpGet'
@@ -68,7 +70,7 @@ resource db 'Applications.Datastores/sqlDatabases@2023-10-01-preview' = {
     resourceProvisioning: 'manual'
     port: sqlPort
     username: username
-    secrets:{
+    secrets: {
       password: password
     }
   }
@@ -82,9 +84,15 @@ resource sqlContainer 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: sqlImage
       env: {
-        ACCEPT_EULA: 'Y'
-        MSSQL_PID: 'Developer'
-        MSSQL_SA_PASSWORD: password
+        ACCEPT_EULA: {
+          value: 'Y'
+        }
+        MSSQL_PID: {
+          value: 'Developer'
+        }
+        MSSQL_SA_PASSWORD: {
+          value: password
+        }
       }
       ports: {
         sql: {

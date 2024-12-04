@@ -1,4 +1,4 @@
-import radius as radius
+extension radius
 
 @description('Specifies the location for resources.')
 param location string = 'global'
@@ -25,7 +25,9 @@ resource mechanicsd 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: magpieimage
       env: {
-        TEST: 'updated'
+        TEST: {
+          value: 'updated'
+        }
       }
     }
   }

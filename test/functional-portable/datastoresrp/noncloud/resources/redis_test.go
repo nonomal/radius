@@ -18,6 +18,7 @@ package resource_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -99,14 +100,16 @@ func Test_Redis_Recipe(t *testing.T) {
 			},
 			SkipObjectValidation: true,
 			PostStepVerify: func(ctx context.Context, t *testing.T, test rp.RPTest) {
-				redis, err := test.Options.ManagementClient.ShowResource(ctx, "Applications.Datastores/redisCaches", "rds-recipe")
+				redis, err := test.Options.ManagementClient.GetResource(ctx, "Applications.Datastores/redisCaches", "rds-recipe")
 				require.NoError(t, err)
 				require.NotNil(t, redis)
 				status := redis.Properties["status"].(map[string]any)
 				recipe := status["recipe"].(map[string]interface{})
 				require.Equal(t, "bicep", recipe["templateKind"].(string))
-				templatePath := strings.Split(recipe["templatePath"].(string), ":")[0]
-				require.Equal(t, "ghcr.io/radius-project/dev/test/testrecipes/test-bicep-recipes/redis-recipe-value-backed", templatePath)
+				// Updated templatePath is calculated by removing the tag from the templatePath
+				templatePath := recipe["templatePath"].(string)[:strings.LastIndex(recipe["templatePath"].(string), ":")]
+				registry := strings.TrimPrefix(testutil.GetBicepRecipeRegistry(), "registry=")
+				require.Equal(t, fmt.Sprintf("%s/test/testrecipes/test-bicep-recipes/redis-recipe-value-backed", registry), templatePath)
 			},
 		},
 	})
