@@ -46,7 +46,7 @@ func (r *Runner) CreateEnvironment(ctx context.Context) error {
 		return err
 	}
 
-	err = client.CreateUCPGroup(ctx, "local", r.Options.Environment.Name, ucp.ResourceGroupResource{
+	err = client.CreateOrUpdateResourceGroup(ctx, "local", r.Options.Environment.Name, &ucp.ResourceGroupResource{
 		Location: to.Ptr(v1.LocationGlobal),
 	})
 	if err != nil {
@@ -82,7 +82,10 @@ func (r *Runner) CreateEnvironment(ctx context.Context) error {
 		Recipes:   recipes,
 	}
 
-	err = client.CreateEnvironment(ctx, r.Options.Environment.Name, v1.LocationGlobal, &envProperties)
+	err = client.CreateOrUpdateEnvironment(ctx, r.Options.Environment.Name, &corerp.EnvironmentResource{
+		Location:   to.Ptr(v1.LocationGlobal),
+		Properties: &envProperties,
+	})
 	if err != nil {
 		return clierrors.MessageWithCause(err, "Failed to create environment.")
 	}
@@ -93,16 +96,24 @@ func (r *Runner) CreateEnvironment(ctx context.Context) error {
 	}
 
 	if r.Options.CloudProviders.Azure != nil {
-		credential := r.getAzureCredential()
-		err := credentialClient.PutAzure(ctx, credential)
+		credential, err := r.getAzureCredential()
+		if err != nil {
+			return clierrors.MessageWithCause(err, "Failed to configure Azure credentials.")
+		}
+
+		err = credentialClient.PutAzure(ctx, credential)
 		if err != nil {
 			return clierrors.MessageWithCause(err, "Failed to configure Azure credentials.")
 		}
 	}
 
 	if r.Options.CloudProviders.AWS != nil {
-		credential := r.getAWSCredential()
-		err := credentialClient.PutAWS(ctx, credential)
+		credential, err := r.getAWSCredential()
+		if err != nil {
+			return clierrors.MessageWithCause(err, "Failed to configure AWS credentials.")
+		}
+
+		err = credentialClient.PutAWS(ctx, credential)
 		if err != nil {
 			return clierrors.MessageWithCause(err, "Failed to configure AWS credentials.")
 		}

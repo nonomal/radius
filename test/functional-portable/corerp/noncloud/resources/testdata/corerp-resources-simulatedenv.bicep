@@ -1,4 +1,4 @@
-import radius as radius
+extension radius
 
 @description('Specifies the location for resources.')
 param location string = 'local'
@@ -91,7 +91,9 @@ resource backendContainer 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: magpieimage
       env: {
-        gatewayUrl: gateway.properties.url
+        gatewayUrl: {
+          value: gateway.properties.url
+        }
       }
       ports: {
         web: {

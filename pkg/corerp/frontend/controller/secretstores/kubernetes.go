@@ -25,6 +25,7 @@ import (
 
 	"github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	"github.com/radius-project/radius/pkg/armrpc/rest"
+	"github.com/radius-project/radius/pkg/components/database"
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/kubernetes"
 	"github.com/radius-project/radius/pkg/kubeutil"
@@ -32,7 +33,6 @@ import (
 	"github.com/radius-project/radius/pkg/to"
 	"github.com/radius-project/radius/pkg/ucp/resources"
 	resources_kubernetes "github.com/radius-project/radius/pkg/ucp/resources/kubernetes"
-	"github.com/radius-project/radius/pkg/ucp/store"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,6 +46,9 @@ func getOrDefaultType(t datamodel.SecretType) (datamodel.SecretType, error) {
 		t = datamodel.SecretTypeGeneric
 	case datamodel.SecretTypeCert:
 	case datamodel.SecretTypeGeneric:
+	case datamodel.SecretTypeBasicAuthentication:
+	case datamodel.SecretTypeAzureWorkloadIdentity:
+	case datamodel.SecretTypeAWSIRSA:
 	default:
 		err = fmt.Errorf("'%s' is invalid secret type", t)
 	}
@@ -76,9 +79,16 @@ func getOrDefaultEncoding(t datamodel.SecretType, e datamodel.SecretValueEncodin
 }
 
 // ValidateAndMutateRequest checks the type and encoding of the secret store, and ensures that the secret store data is
-// valid. If any of these checks fail, a BadRequestResponse is returned.
+// valid and required keys are present for the secret type. If any of these checks fail, a BadRequestResponse is returned.
 func ValidateAndMutateRequest(ctx context.Context, newResource *datamodel.SecretStore, oldResource *datamodel.SecretStore, options *controller.Options) (rest.Response, error) {
+	// Define a map of required keys for each SecretType
+	var requiredKeys = map[datamodel.SecretType][]string{
+		datamodel.SecretTypeBasicAuthentication:   {UsernameKey, PasswordKey},
+		datamodel.SecretTypeAzureWorkloadIdentity: {ClientIdKey, TenantIdKey},
+		datamodel.SecretTypeAWSIRSA:               {RoleARNKey},
+	}
 	var err error
+
 	newResource.Properties.Type, err = getOrDefaultType(newResource.Properties.Type)
 	if err != nil {
 		return rest.NewBadRequestResponse(err.Error()), nil
@@ -116,13 +126,22 @@ func ValidateAndMutateRequest(ctx context.Context, newResource *datamodel.Secret
 		}
 	}
 
+	// Validate that required keys for the secret type are present in the secret data
+	if keys, ok := requiredKeys[newResource.Properties.Type]; ok {
+		for _, key := range keys {
+			if _, ok := newResource.Properties.Data[key]; !ok {
+				return rest.NewBadRequestResponse(fmt.Sprintf("$.properties.data must contain '%s' key for %s type.", key, newResource.Properties.Type)), nil
+			}
+		}
+	}
+
 	return nil, nil
 }
 
 func getNamespace(ctx context.Context, res *datamodel.SecretStore, options *controller.Options) (string, error) {
 	prop := res.Properties
 	if prop.Application != "" {
-		app, err := store.GetResource[datamodel.Application](ctx, options.StorageClient, prop.Application)
+		app, err := database.GetResource[datamodel.Application](ctx, options.DatabaseClient, prop.Application)
 		if err != nil {
 			return "", err
 		}
@@ -133,7 +152,7 @@ func getNamespace(ctx context.Context, res *datamodel.SecretStore, options *cont
 	}
 
 	if prop.Environment != "" {
-		env, err := store.GetResource[datamodel.Environment](ctx, options.StorageClient, prop.Environment)
+		env, err := database.GetResource[datamodel.Environment](ctx, options.DatabaseClient, prop.Environment)
 		if err != nil {
 			return "", err
 		}

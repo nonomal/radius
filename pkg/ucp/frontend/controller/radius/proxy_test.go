@@ -28,37 +28,52 @@ import (
 	"github.com/radius-project/radius/pkg/armrpc/asyncoperation/statusmanager"
 	"github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	"github.com/radius-project/radius/pkg/armrpc/rest"
+	"github.com/radius-project/radius/pkg/components/database"
+	"github.com/radius-project/radius/pkg/to"
 	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/resources"
-	"github.com/radius-project/radius/pkg/ucp/store"
 	"github.com/radius-project/radius/pkg/ucp/trackedresource"
 	"github.com/radius-project/radius/test/testcontext"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
+const (
+	apiVersion = "2025-01-01"
+	location   = "global"
+)
+
 // The Run function is also tested by integration tests in the pkg/ucp/integrationtests/radius package.
 
-func createController(t *testing.T) (*ProxyController, *store.MockStorageClient, *mockUpdater, *mockRoundTripper, *statusmanager.MockStatusManager) {
+func createController(t *testing.T) (*ProxyController, *database.MockClient, *mockUpdater, *mockRoundTripper, *statusmanager.MockStatusManager) {
 	ctrl := gomock.NewController(t)
-	storageClient := store.NewMockStorageClient(ctrl)
+	databaseClient := database.NewMockClient(ctrl)
 	statusManager := statusmanager.NewMockStatusManager(ctrl)
 
-	p, err := NewProxyController(controller.Options{StorageClient: storageClient, StatusManager: statusManager})
+	roundTripper := mockRoundTripper{}
+
+	p, err := NewProxyController(
+		controller.Options{DatabaseClient: databaseClient, StatusManager: statusManager},
+		&roundTripper,
+		"http://localhost:1234")
 	require.NoError(t, err)
 
 	updater := mockUpdater{}
-	roundTripper := mockRoundTripper{}
 
 	pc := p.(*ProxyController)
 	pc.updater = &updater
-	pc.transport = &roundTripper
 
-	return pc, storageClient, &updater, &roundTripper, statusManager
+	return pc, databaseClient, &updater, &roundTripper, statusManager
 }
 
 func Test_Run(t *testing.T) {
 	id := resources.MustParse("/planes/test/local/resourceGroups/test-rg/providers/Applications.Test/testResources/my-resource")
+
+	resourceTypeID, err := datamodel.ResourceTypeIDFromResourceID(id)
+	require.NoError(t, err)
+
+	locationID, err := datamodel.ResourceProviderLocationIDFromResourceID(id, "global")
+	require.NoError(t, err)
 
 	plane := datamodel.RadiusPlane{
 		Properties: datamodel.RadiusPlaneProperties{
@@ -67,12 +82,48 @@ func Test_Run(t *testing.T) {
 			},
 		},
 	}
-	resourceGroup := datamodel.ResourceGroup{}
+	resourceGroup := &datamodel.ResourceGroup{
+		BaseResource: v1.BaseResource{
+			TrackedResource: v1.TrackedResource{
+				ID: id.RootScope(),
+			},
+		},
+	}
+
+	resourceTypeResource := &datamodel.ResourceType{
+		BaseResource: v1.BaseResource{
+			TrackedResource: v1.TrackedResource{
+				Name: "testResources",
+				ID:   resourceTypeID.String(),
+			},
+		},
+		Properties: datamodel.ResourceTypeProperties{},
+	}
+
+	locationResource := &datamodel.Location{
+		BaseResource: v1.BaseResource{
+			TrackedResource: v1.TrackedResource{
+				Name: "global",
+				ID:   locationID.String(),
+			},
+		},
+		Properties: datamodel.LocationProperties{
+			Address: to.Ptr("https://localhost:1234"),
+			ResourceTypes: map[string]datamodel.LocationResourceTypeConfiguration{
+				"testResources": {
+					APIVersions: map[string]datamodel.LocationAPIVersionConfiguration{
+						"2025-01-01": {},
+					},
+				},
+			},
+		},
+	}
 
 	t.Run("success (non-tracked)", func(t *testing.T) {
-		p, storageClient, _, roundTripper, _ := createController(t)
+		p, databaseClient, _, roundTripper, _ := createController(t)
 
 		svcContext := &v1.ARMRequestContext{
+			APIVersion: apiVersion,
 			ResourceID: id,
 		}
 		ctx := testcontext.New(t)
@@ -81,15 +132,23 @@ func Test_Run(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Not a mutating request
-		req := httptest.NewRequest(http.MethodGet, id.String(), nil)
+		req := httptest.NewRequest(http.MethodGet, id.String()+"?api-version="+apiVersion, nil)
 
-		storageClient.EXPECT().
-			Get(gomock.Any(), "/planes/"+id.PlaneNamespace(), gomock.Any()).
-			Return(&store.Object{Data: plane}, nil).Times(1)
+		databaseClient.EXPECT().
+			Get(gomock.Any(), id.PlaneScope(), gomock.Any()).
+			Return(&database.Object{Data: plane}, nil).Times(1)
 
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
+			Get(gomock.Any(), resourceTypeID.String(), gomock.Any()).
+			Return(&database.Object{Data: resourceTypeResource}, nil).Times(1)
+
+		databaseClient.EXPECT().
 			Get(gomock.Any(), id.RootScope(), gomock.Any()).
-			Return(&store.Object{Data: resourceGroup}, nil).Times(1)
+			Return(&database.Object{Data: resourceGroup}, nil).Times(1)
+
+		databaseClient.EXPECT().
+			Get(gomock.Any(), locationResource.ID).
+			Return(&database.Object{Data: locationResource}, nil).Times(1)
 
 		downstreamResponse := httptest.NewRecorder()
 		downstreamResponse.WriteHeader(http.StatusOK)
@@ -101,9 +160,10 @@ func Test_Run(t *testing.T) {
 	})
 
 	t.Run("success (tracked terminal response)", func(t *testing.T) {
-		p, storageClient, updater, roundTripper, _ := createController(t)
+		p, databaseClient, updater, roundTripper, _ := createController(t)
 
 		svcContext := &v1.ARMRequestContext{
+			APIVersion: apiVersion,
 			ResourceID: id,
 		}
 		ctx := testcontext.New(t)
@@ -112,15 +172,23 @@ func Test_Run(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Mutating request that will complete synchronously
-		req := httptest.NewRequest(http.MethodDelete, id.String(), nil)
+		req := httptest.NewRequest(http.MethodDelete, id.String()+"?api-version="+apiVersion, nil)
 
-		storageClient.EXPECT().
-			Get(gomock.Any(), "/planes/"+id.PlaneNamespace(), gomock.Any()).
-			Return(&store.Object{Data: plane}, nil).Times(1)
+		databaseClient.EXPECT().
+			Get(gomock.Any(), id.PlaneScope(), gomock.Any()).
+			Return(&database.Object{Data: plane}, nil).Times(1)
 
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
+			Get(gomock.Any(), resourceTypeID.String(), gomock.Any()).
+			Return(&database.Object{Data: resourceTypeResource}, nil).Times(1)
+
+		databaseClient.EXPECT().
 			Get(gomock.Any(), id.RootScope(), gomock.Any()).
-			Return(&store.Object{Data: resourceGroup}, nil).Times(1)
+			Return(&database.Object{Data: resourceGroup}, nil).Times(1)
+
+		databaseClient.EXPECT().
+			Get(gomock.Any(), locationResource.ID).
+			Return(&database.Object{Data: locationResource}, nil).Times(1)
 
 		downstreamResponse := httptest.NewRecorder()
 		downstreamResponse.WriteHeader(http.StatusOK)
@@ -135,9 +203,10 @@ func Test_Run(t *testing.T) {
 	})
 
 	t.Run("success (fallback to async)", func(t *testing.T) {
-		p, storageClient, updater, roundTripper, statusManager := createController(t)
+		p, databaseClient, updater, roundTripper, statusManager := createController(t)
 
 		svcContext := &v1.ARMRequestContext{
+			APIVersion: apiVersion,
 			ResourceID: id,
 		}
 		ctx := testcontext.New(t)
@@ -146,21 +215,29 @@ func Test_Run(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Mutating request that will complete synchronously
-		req := httptest.NewRequest(http.MethodDelete, id.String(), nil)
+		req := httptest.NewRequest(http.MethodDelete, id.String()+"?api-version="+apiVersion, nil)
 
-		storageClient.EXPECT().
-			Get(gomock.Any(), "/planes/"+id.PlaneNamespace(), gomock.Any()).
-			Return(&store.Object{Data: plane}, nil).Times(1)
+		databaseClient.EXPECT().
+			Get(gomock.Any(), id.PlaneScope(), gomock.Any()).
+			Return(&database.Object{Data: plane}, nil).Times(1)
 
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
+			Get(gomock.Any(), resourceTypeID.String(), gomock.Any()).
+			Return(&database.Object{Data: resourceTypeResource}, nil).Times(1)
+
+		databaseClient.EXPECT().
 			Get(gomock.Any(), id.RootScope(), gomock.Any()).
-			Return(&store.Object{Data: resourceGroup}, nil).Times(1)
+			Return(&database.Object{Data: resourceGroup}, nil).Times(1)
+
+		databaseClient.EXPECT().
+			Get(gomock.Any(), locationResource.ID).
+			Return(&database.Object{Data: locationResource}, nil).Times(1)
 
 		// Tracking entry created
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
 			Get(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(nil, &store.ErrNotFound{}).Times(1)
-		storageClient.EXPECT().
+			Return(nil, &database.ErrNotFound{}).Times(1)
+		databaseClient.EXPECT().
 			Save(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil).Times(1)
 
@@ -181,9 +258,10 @@ func Test_Run(t *testing.T) {
 	})
 
 	t.Run("success (fallback to async without workitem)", func(t *testing.T) {
-		p, storageClient, updater, roundTripper, _ := createController(t)
+		p, databaseClient, updater, roundTripper, _ := createController(t)
 
 		svcContext := &v1.ARMRequestContext{
+			APIVersion: apiVersion,
 			ResourceID: id,
 		}
 		ctx := testcontext.New(t)
@@ -192,18 +270,26 @@ func Test_Run(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Mutating request that will complete asynchronously
-		req := httptest.NewRequest(http.MethodDelete, id.String(), nil)
+		req := httptest.NewRequest(http.MethodDelete, id.String()+"?api-version="+apiVersion, nil)
 
-		storageClient.EXPECT().
-			Get(gomock.Any(), "/planes/"+id.PlaneNamespace(), gomock.Any()).
-			Return(&store.Object{Data: plane}, nil).Times(1)
+		databaseClient.EXPECT().
+			Get(gomock.Any(), id.PlaneScope(), gomock.Any()).
+			Return(&database.Object{Data: plane}, nil).Times(1)
 
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
+			Get(gomock.Any(), resourceTypeID.String(), gomock.Any()).
+			Return(&database.Object{Data: resourceTypeResource}, nil).Times(1)
+
+		databaseClient.EXPECT().
 			Get(gomock.Any(), id.RootScope(), gomock.Any()).
-			Return(&store.Object{Data: resourceGroup}, nil).Times(1)
+			Return(&database.Object{Data: resourceGroup}, nil).Times(1)
+
+		databaseClient.EXPECT().
+			Get(gomock.Any(), locationResource.ID).
+			Return(&database.Object{Data: locationResource}, nil).Times(1)
 
 		// Tracking entry created
-		existingEntry := &store.Object{
+		existingEntry := &database.Object{
 			Data: &datamodel.GenericResource{
 				BaseResource: v1.BaseResource{
 					InternalMetadata: v1.InternalMetadata{
@@ -212,10 +298,10 @@ func Test_Run(t *testing.T) {
 				},
 			},
 		}
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
 			Get(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(existingEntry, nil).Times(1)
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
 			Save(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil).Times(1)
 
@@ -234,22 +320,23 @@ func Test_Run(t *testing.T) {
 	})
 
 	t.Run("failure (validate downstream: not found)", func(t *testing.T) {
-		p, storageClient, _, _, _ := createController(t)
+		p, databaseClient, _, _, _ := createController(t)
 
 		svcContext := &v1.ARMRequestContext{
+			APIVersion: apiVersion,
 			ResourceID: id,
 		}
 		ctx := testcontext.New(t)
 		ctx = v1.WithARMRequestContext(ctx, svcContext)
 
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, id.String(), nil)
+		req := httptest.NewRequest(http.MethodPut, id.String()+"?api-version="+apiVersion, nil)
 
-		storageClient.EXPECT().
+		databaseClient.EXPECT().
 			Get(gomock.Any(), "/planes/"+id.PlaneNamespace(), gomock.Any()).
-			Return(nil, &store.ErrNotFound{}).Times(1)
+			Return(nil, &database.ErrNotFound{}).Times(1)
 
-		expected := rest.NewNotFoundResponse(id)
+		expected := rest.NewNotFoundResponseWithCause(id, "plane \"/planes/test/local\" not found")
 
 		response, err := p.Run(ctx, w, req)
 		require.NoError(t, err)

@@ -29,7 +29,7 @@ generate: generate-genericcliclient generate-rad-corerp-client generate-rad-data
 .PHONY: generate-tsp-installed
 generate-tsp-installed:
 	@echo "$(ARROW) Detecting tsp..."
-	cd typespec/ && npx$(CMD_EXT) -q tsp --help > /dev/null || { echo "run 'npm ci' in typespec directory."; exit 1; }
+	cd typespec/ && npx$(CMD_EXT) -q -y tsp --help > /dev/null || { echo "run 'npm ci' in typespec directory."; exit 1; }
 	@echo "$(ARROW) OK"
 
 .PHONY: generate-openapi-spec
@@ -56,14 +56,14 @@ generate-autorest-installed:
 .PHONY: generate-controller-gen-installed
 generate-controller-gen-installed:
 	@echo "$(ARROW) Detecting controller-gen..."
-	@which controller-gen > /dev/null || { echo "run 'go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.15.0'"; exit 1; }
+	@which controller-gen > /dev/null || { echo "run 'go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.0'"; exit 1; }
 	@echo "$(ARROW) OK"
 
 .PHONY: generate-ucp-crd
 generate-ucp-crd: generate-controller-gen-installed ## Generates the CRDs for UCP APIServer store.
 	@echo "$(ARROW) Generating CRDs for ucp.dev..."
-	controller-gen object:headerFile=./boilerplate.go.txt paths=./pkg/ucp/store/apiserverstore/api/ucp.dev/v1alpha1/...
-	controller-gen crd paths=./pkg/ucp/store/apiserverstore/api/ucp.dev/v1alpha1/... output:crd:dir=./deploy/Chart/crds/ucpd
+	controller-gen object:headerFile=./boilerplate.go.txt paths=./pkg/components/database/apiserverstore/api/ucp.dev/v1alpha1/...
+	controller-gen crd paths=./pkg/components/database/apiserverstore/api/ucp.dev/v1alpha1/... output:crd:dir=./deploy/Chart/crds/ucpd
 
 .PHONY: generate-controller
 generate-controller: generate-controller-gen-installed ## Generates the CRDs for the Radius controller.
@@ -79,27 +79,27 @@ generate-genericcliclient: generate-node-installed generate-autorest-installed
 .PHONY: generate-rad-corerp-client
 generate-rad-corerp-client: generate-node-installed generate-autorest-installed generate-tsp-installed generate-openapi-spec ## Generates the corerp client SDK (Autorest).
 	@echo "$(AUTOREST_MODULE_VERSION) is module version"
-	autorest pkg/corerp/api/README.md --tag=core-2023-10-01-preview
+	autorest pkg/corerp/api/README.md --tag=core-2023-10-01-preview && rm pkg/corerp/api/v20231001preview/go.mod
 
 .PHONY: generate-rad-datastoresrp-client
 generate-rad-datastoresrp-client: generate-node-installed generate-autorest-installed generate-tsp-installed generate-openapi-spec ## Generates the datastoresrp client SDK (Autorest).
 	@echo "$(AUTOREST_MODULE_VERSION) is module version"
-	autorest pkg/datastoresrp/api/README.md --tag=datastores-2023-10-01-preview
+	autorest pkg/datastoresrp/api/README.md --tag=datastores-2023-10-01-preview && rm pkg/datastoresrp/api/v20231001preview/go.mod
 
 .PHONY: generate-rad-messagingrp-client
 generate-rad-messagingrp-client: generate-node-installed generate-autorest-installed generate-tsp-installed generate-openapi-spec ## Generates the messagingrp client SDK (Autorest).
 	@echo "$(AUTOREST_MODULE_VERSION) is module version"
-	autorest pkg/messagingrp/api/README.md --tag=messaging-2023-10-01-preview
+	autorest pkg/messagingrp/api/README.md --tag=messaging-2023-10-01-preview && rm pkg/messagingrp/api/v20231001preview/go.mod
 
 .PHONY: generate-rad-daprrp-client
 generate-rad-daprrp-client: generate-node-installed generate-autorest-installed generate-tsp-installed generate-openapi-spec ## Generates the daprrp client SDK (Autorest).
 	@echo "$(AUTOREST_MODULE_VERSION) is module version"
-	autorest pkg/daprrp/api/README.md --tag=dapr-2023-10-01-preview
+	autorest pkg/daprrp/api/README.md --tag=dapr-2023-10-01-preview && rm pkg/daprrp/api/v20231001preview/go.mod
 
 .PHONY: generate-rad-ucp-client
 generate-rad-ucp-client: generate-node-installed generate-autorest-installed test-ucp-spec-examples ## Generates the UCP client SDK (Autorest).
 	@echo "$(AUTOREST_MODULE_VERSION) is module version"
-	autorest pkg/ucp/api/README.md --tag=ucp-2023-10-01-preview
+	autorest pkg/ucp/api/README.md --tag=ucp-2023-10-01-preview && rm pkg/ucp/api/v20231001preview/go.mod
 
 .PHONY: generate-mockgen-installed
 generate-mockgen-installed:
@@ -116,11 +116,12 @@ generate-go: generate-mockgen-installed ## Generates go with 'go generate' (Mock
 generate-bicep-types: generate-node-installed ## Generate Bicep extensibility types
 	@echo "$(ARROW) Generating Bicep extensibility types from OpenAPI specs..."
 	@echo "$(ARROW) Build autorest.bicep..."
-	cd hack/bicep-types-radius/src/autorest.bicep; \
-	npm ci && npm run build; \
-	cd ../generator; \
+	git submodule update --init --recursive; \
+	npm --prefix bicep-types/src/bicep-types install; \
+	npm --prefix bicep-types/src/bicep-types ci && npm --prefix bicep-types/src/bicep-types run build; \
+	npm --prefix hack/bicep-types-radius/src/autorest.bicep ci && npm --prefix hack/bicep-types-radius/src/autorest.bicep run build; \
 	echo "Run generator from hack/bicep-types-radius/src/generator dir"; \
-	npm ci && npm run generate -- --specs-dir ../../../../swagger --verbose
+	npm --prefix hack/bicep-types-radius/src/generator ci && npm --prefix hack/bicep-types-radius/src/generator run generate -- --specs-dir ../../../../swagger --release-version ${VERSION} --verbose
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))/..

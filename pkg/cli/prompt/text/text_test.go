@@ -29,6 +29,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const defaultText = "test default"
+const testPrompt = "test prompt"
+const testPlaceholder = "test placeholder"
+
 var (
 	// Set this to a big value when debugging.
 	waitTimeout = 5 * time.Second
@@ -36,49 +40,57 @@ var (
 
 func Test_NewTextModel(t *testing.T) {
 	options := TextModelOptions{
-		Default:     "test default",
-		Placeholder: "test placeholder",
+		Default:     defaultText,
+		Placeholder: testPlaceholder,
 		Validate: func(input string) error {
 			return nil
 		},
 	}
-	model := NewTextModel("test prompt", options)
-	require.NotNil(t, model)
-	require.NotNil(t, model.textInput)
 
-	require.Equal(t, "test prompt", model.prompt)
-	require.Equal(t, options.Placeholder, model.textInput.Placeholder)
+	model := NewTextModel(testPrompt, options)
+
+	validateNewTextModel(t, &model, &options)
 	require.Equal(t, textinput.EchoNormal, model.textInput.EchoMode)
-	require.Nil(t, model.textInput.Validate) // See comments in NewTextModel.
 }
 
 func Test_NewTextModel_UpdateEchoMode(t *testing.T) {
 	options := TextModelOptions{
-		Default:     "test default",
-		Placeholder: "test placeholder",
+		Default:     defaultText,
+		Placeholder: testPlaceholder,
 		Validate: func(input string) error {
 			return nil
 		},
 		EchoMode: textinput.EchoPassword,
 	}
-	model := NewTextModel("test prompt", options)
+
+	model := NewTextModel(testPrompt, options)
+
+	validateNewTextModel(t, &model, &options)
+	require.Equal(t, textinput.EchoPassword, model.textInput.EchoMode)
+}
+
+func validateNewTextModel(t *testing.T, model *Model, options *TextModelOptions) {
 	require.NotNil(t, model)
 	require.NotNil(t, model.textInput)
-
-	require.Equal(t, "test prompt", model.prompt)
+	require.Equal(t, testPrompt, model.prompt)
 	require.Equal(t, options.Placeholder, model.textInput.Placeholder)
-	require.Equal(t, textinput.EchoPassword, model.textInput.EchoMode)
 	require.Nil(t, model.textInput.Validate) // See comments in NewTextModel.
 }
 
 func Test_E2E(t *testing.T) {
+	const expectedPrompt = "\r" + testPrompt + "\n" +
+		"\n" +
+		"> " + testPlaceholder + "\n" +
+		"\n" +
+		"(ctrl+c to quit)"
+
 	setup := func(t *testing.T) *teatest.TestModel {
 		options := TextModelOptions{
-			Default:     "test default",
-			Placeholder: "test placeholder",
+			Default:     defaultText,
+			Placeholder: testPlaceholder,
 		}
-		model := NewTextModel("test prompt", options)
-		return teatest.NewTestModel(t, model, teatest.WithInitialTermSize(80, 50))
+		model := NewTextModel(testPrompt, options)
+		return teatest.NewTestModel(t, model, teatest.WithInitialTermSize(18, 50))
 	}
 
 	normalizeOutput := func(bts []byte) string {
@@ -100,73 +112,76 @@ func Test_E2E(t *testing.T) {
 		return waitForContains(t, reader, ">")
 	}
 
-	t.Run("confirm default", func(t *testing.T) {
+	t.Run("confirm prompt", func(t *testing.T) {
 		tm := setup(t)
+
 		output := waitForInitialRender(t, tm.Output())
 
-		expected := "test prompt\n" +
-			"\n" +
-			"> test placeholder\n" +
-			"\n" +
-			"(ctrl+c to quit)"
-		require.Equal(t, expected, output)
+		require.Equal(t, expectedPrompt, output)
+	})
 
-		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-		tm.WaitFinished(t, teatest.WithFinalTimeout(waitTimeout))
-		bts, err := io.ReadAll(tm.FinalOutput(t))
-		require.NoError(t, err)
+	t.Run("confirm default", func(t *testing.T) {
+		tm := setup(t)
+		tm.Send(tea.KeyMsg{
+			Type: tea.KeyEnter,
+		})
 
-		output = normalizeOutput(bts)
-		require.Empty(t, strings.TrimSpace(output)) // Output sometimes contains a single space.
-		require.True(t, tm.FinalModel(t).(Model).valueEntered)
-		require.False(t, tm.FinalModel(t).(Model).Quitting)
-		require.Equal(t, "test default", tm.FinalModel(t).(Model).GetValue())
+		if err := tm.Quit(); err != nil {
+			t.Fatal(err)
+		}
+
+		// FinalModel only returns once the program has finished running or when it times out.
+		// Please see: https://github.com/charmbracelet/x/blob/20117e9c8cd5ad229645f1bca3422b7e4110c96c/exp/teatest/teatest.go#L220.
+		// That is why we call tm.Quit() before tm.FinalModel().
+		model, ok := tm.FinalModel(t).(Model)
+		require.True(t, ok, "Final model should be of type Model")
+
+		require.True(t, model.valueEntered)
+		require.False(t, model.Quitting)
+		require.Equal(t, defaultText, model.GetValue())
 	})
 
 	t.Run("confirm value", func(t *testing.T) {
+		const userInputText = "abcd"
 		tm := setup(t)
-		output := waitForInitialRender(t, tm.Output())
+		tm.Type(userInputText)
+		tm.Send(tea.KeyMsg{
+			Type: tea.KeyEnter,
+		})
 
-		expected := "test prompt\n" +
-			"\n" +
-			"> test placeholder\n" +
-			"\n" +
-			"(ctrl+c to quit)"
-		require.Equal(t, expected, output)
+		if err := tm.Quit(); err != nil {
+			t.Fatal(err)
+		}
 
-		tm.Type("abcd")
-		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-		tm.WaitFinished(t, teatest.WithFinalTimeout(waitTimeout))
-		bts, err := io.ReadAll(tm.FinalOutput(t))
-		require.NoError(t, err)
+		// FinalModel only returns once the program has finished running or when it times out.
+		// Please see: https://github.com/charmbracelet/x/blob/20117e9c8cd5ad229645f1bca3422b7e4110c96c/exp/teatest/teatest.go#L220.
+		// That is why we call tm.Quit() before tm.FinalModel().
+		model, ok := tm.FinalModel(t).(Model)
+		require.True(t, ok, "Final model should be of type Model")
 
-		output = normalizeOutput(bts)
-		require.Empty(t, strings.TrimSpace(output)) // Output sometimes contains a single space.
-		require.True(t, tm.FinalModel(t).(Model).valueEntered)
-		require.False(t, tm.FinalModel(t).(Model).Quitting)
-		require.Equal(t, "abcd", tm.FinalModel(t).(Model).GetValue())
+		require.True(t, model.valueEntered)
+		require.False(t, model.Quitting)
+		require.Equal(t, userInputText, model.GetValue())
 	})
 
 	t.Run("cancel", func(t *testing.T) {
 		tm := setup(t)
-		output := waitForInitialRender(t, tm.Output())
+		tm.Send(tea.KeyMsg{
+			Type: tea.KeyCtrlC,
+		})
 
-		expected := "test prompt\n" +
-			"\n" +
-			"> test placeholder\n" +
-			"\n" +
-			"(ctrl+c to quit)"
-		require.Equal(t, expected, output)
+		if err := tm.Quit(); err != nil {
+			t.Fatal(err)
+		}
 
-		tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-		tm.WaitFinished(t, teatest.WithFinalTimeout(waitTimeout))
-		bts, err := io.ReadAll(tm.FinalOutput(t))
-		require.NoError(t, err)
+		// FinalModel only returns once the program has finished running or when it times out.
+		// Please see: https://github.com/charmbracelet/x/blob/20117e9c8cd5ad229645f1bca3422b7e4110c96c/exp/teatest/teatest.go#L220.
+		// That is why we call tm.Quit() before tm.FinalModel().
+		model, ok := tm.FinalModel(t).(Model)
+		require.True(t, ok, "Final model should be of type Model")
 
-		output = normalizeOutput(bts)
-		require.Empty(t, strings.TrimSpace(output)) // Output sometimes contains a single space.
-		require.False(t, tm.FinalModel(t).(Model).valueEntered)
-		require.True(t, tm.FinalModel(t).(Model).Quitting)
-		require.Equal(t, "test default", tm.FinalModel(t).(Model).GetValue())
+		require.False(t, model.valueEntered)
+		require.True(t, model.Quitting)
+		require.Equal(t, defaultText, model.GetValue())
 	})
 }

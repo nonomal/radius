@@ -44,15 +44,6 @@ func Test_summaryModel(t *testing.T) {
 
 		return normalized
 	}
-	waitForEmpty := func(t *testing.T, reader io.Reader) string {
-		normalized := ""
-		teatest.WaitFor(t, reader, func(bts []byte) bool {
-			normalized = stripansi.Strip(strings.ReplaceAll(string(bts), "\r\n", "\n"))
-			return !strings.Contains(normalized, strings.Trim(summaryFooter, "\n"))
-		}, teatest.WithDuration(waitTimeout))
-
-		return normalized
-	}
 
 	resultTest := func(t *testing.T, expected summaryResult, key tea.KeyType) {
 		options := initOptions{}
@@ -63,12 +54,18 @@ func Test_summaryModel(t *testing.T) {
 
 		waitForRender(t, tm.Output())
 
-		// Press ENTER
-		tm.Send(tea.KeyMsg{Type: key})
+		// Press the given key
+		tm.Send(tea.KeyMsg{
+			Type: key,
+		})
 
-		// Wait for final render and exit.
-		tm.WaitFinished(t, teatest.WithFinalTimeout(waitTimeout))
-		waitForEmpty(t, tm.FinalOutput(t))
+		if err := tm.Quit(); err != nil {
+			t.Fatal(err)
+		}
+
+		// FinalModel only returns once the program has finished running or when it times out.
+		// Please see: https://github.com/charmbracelet/x/blob/20117e9c8cd5ad229645f1bca3422b7e4110c96c/exp/teatest/teatest.go#L220.
+		// That is why we call tm.Quit() before tm.FinalModel().
 		model = tm.FinalModel(t).(*summaryModel)
 		require.Equal(t, expected, model.result)
 	}
@@ -76,9 +73,11 @@ func Test_summaryModel(t *testing.T) {
 	t.Run("Result: Confirm", func(t *testing.T) {
 		resultTest(t, resultConfimed, tea.KeyEnter)
 	})
+
 	t.Run("Result: Cancel", func(t *testing.T) {
 		resultTest(t, resultCanceled, tea.KeyEscape)
 	})
+
 	t.Run("Result: Quit", func(t *testing.T) {
 		resultTest(t, resultQuit, tea.KeyCtrlC)
 	})
@@ -93,11 +92,17 @@ func Test_summaryModel(t *testing.T) {
 		assert.Equal(t, expected, output)
 
 		// Press ENTER
-		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+		tm.Send(tea.KeyMsg{
+			Type: tea.KeyEnter,
+		})
 
-		// Wait for final render and exit.
-		tm.WaitFinished(t, teatest.WithFinalTimeout(waitTimeout))
-		waitForEmpty(t, tm.FinalOutput(t))
+		if err := tm.Quit(); err != nil {
+			t.Fatal(err)
+		}
+
+		// FinalModel only returns once the program has finished running or when it times out.
+		// Please see: https://github.com/charmbracelet/x/blob/20117e9c8cd5ad229645f1bca3422b7e4110c96c/exp/teatest/teatest.go#L220.
+		// That is why we call tm.Quit() before tm.FinalModel().
 		model = tm.FinalModel(t).(*summaryModel)
 		assert.Equal(t, summaryResult(resultConfimed), model.result)
 	}
@@ -115,7 +120,7 @@ func Test_summaryModel(t *testing.T) {
 			},
 		}
 
-		expected := "You've selected the following:\n" +
+		expected := "\rYou've selected the following:\n" +
 			"\n" +
 			"🔧 Use existing Radius test-version install on test-context\n" +
 			"🌏 Use existing environment test-environment\n" +
@@ -142,7 +147,7 @@ func Test_summaryModel(t *testing.T) {
 			Application:    applicationOptions{},
 		}
 
-		expected := "You've selected the following:\n" +
+		expected := "\rYou've selected the following:\n" +
 			"\n" +
 			"🔧 Install Radius test-version\n" +
 			"   - Kubernetes cluster: test-context\n" +

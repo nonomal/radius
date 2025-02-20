@@ -127,9 +127,13 @@ func Test_Process(t *testing.T) {
 					ComponentName: componentName,
 				},
 				ResourceProvisioning: portableresources.ResourceProvisioningManual,
-				Metadata:             map[string]any{"config": "extrasecure"},
-				Type:                 "secretstores.kubernetes",
-				Version:              "v1",
+				Metadata: map[string]*rpv1.DaprComponentMetadataValue{
+					"config": {
+						Value: "extrasecure",
+					},
+				},
+				Type:    "secretstores.kubernetes",
+				Version: "v1",
 			},
 		}
 
@@ -210,9 +214,13 @@ func Test_Process(t *testing.T) {
 					ComponentName: componentName,
 				},
 				ResourceProvisioning: portableresources.ResourceProvisioningManual,
-				Metadata:             map[string]any{"config": "extrasecure"},
-				Type:                 "secretstores.kubernetes",
-				Version:              "v1",
+				Metadata: map[string]*rpv1.DaprComponentMetadataValue{
+					"config": {
+						Value: "extrasecure",
+					},
+				},
+				Type:    "secretstores.kubernetes",
+				Version: "v1",
 			},
 		}
 
@@ -343,7 +351,7 @@ func Test_Process(t *testing.T) {
 			dapr.DaprGeneric{
 				Type:     to.Ptr("secretstores.kubernetes"),
 				Version:  to.Ptr("v1"),
-				Metadata: map[string]any{},
+				Metadata: map[string]*rpv1.DaprComponentMetadataValue{},
 			},
 			"test-namespace",
 			"test-component",
@@ -369,9 +377,13 @@ func Test_Process(t *testing.T) {
 					ComponentName: componentName,
 				},
 				ResourceProvisioning: portableresources.ResourceProvisioningManual,
-				Metadata:             map[string]any{"config": "extrasecure"},
-				Type:                 "secretstores.kubernetes",
-				Version:              "v1",
+				Metadata: map[string]*rpv1.DaprComponentMetadataValue{
+					"config": {
+						Value: "extrasecure",
+					},
+				},
+				Type:    "secretstores.kubernetes",
+				Version: "v1",
 			},
 		}
 
@@ -386,6 +398,6 @@ func Test_Process(t *testing.T) {
 		err = processor.Process(context.Background(), resource, options)
 		require.Error(t, err)
 		assert.IsType(t, &processors.ValidationError{}, err)
-		assert.Equal(t, "the Dapr component name '\"test-component\"' is already in use by another resource. Dapr component and resource names must be unique across all Dapr types (eg: StateStores, PubSubBrokers, SecretStores, etc.). Please select a new name and try again", err.Error())
+		assert.Equal(t, "the Dapr component name '\"test-component\"' is already in use by another resource. Dapr component and resource names must be unique across all Dapr types (e.g., StateStores, PubSubBrokers, SecretStores, ConfigurationStores, etc.). Please select a new name and try again.", err.Error())
 	})
 }

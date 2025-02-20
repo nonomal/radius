@@ -22,7 +22,6 @@ import (
 
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	"github.com/radius-project/radius/pkg/armrpc/frontend/controller"
-	armrpc_controller "github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	"github.com/radius-project/radius/pkg/armrpc/frontend/defaultoperation"
 	"github.com/radius-project/radius/pkg/armrpc/frontend/server"
 	"github.com/radius-project/radius/pkg/ucp/api/v20231001preview"
@@ -50,7 +49,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		return nil, err
 	}
 
-	baseRouter := server.NewSubrouter(m.router, m.options.PathBase)
+	baseRouter := server.NewSubrouter(m.router, m.options.Config.Server.PathBase+"/")
 
 	apiValidator := validator.APIValidator(validator.Options{
 		SpecLoader:         m.options.SpecLoader,
@@ -63,7 +62,6 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 	}
 
 	// URLs for lifecycle of planes
-	planeResourceType := "System.Azure/planes"
 	planeCollectionRouter := server.NewSubrouter(baseRouter, planeCollectionPath, apiValidator)
 	planeResourceRouter := server.NewSubrouter(baseRouter, planeResourcePath, apiValidator)
 
@@ -75,7 +73,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			// This is a scope query so we can't use the default operation.
 			ParentRouter:  planeCollectionRouter,
 			Method:        v1.OperationList,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationList},
+			ResourceType:  datamodel.AzurePlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AzurePlaneResourceType, Method: v1.OperationList},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return &planes_ctrl.ListPlanesByType[*datamodel.AzurePlane, datamodel.AzurePlane]{
 					Operation: controller.NewOperation(opts, planeResourceOptions),
@@ -85,7 +84,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationGet,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationGet},
+			ResourceType:  datamodel.AzurePlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AzurePlaneResourceType, Method: v1.OperationGet},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewGetResource(opts, planeResourceOptions)
 			},
@@ -93,7 +93,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationPut,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationPut},
+			ResourceType:  datamodel.AzurePlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AzurePlaneResourceType, Method: v1.OperationPut},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewDefaultSyncPut(opts, planeResourceOptions)
 			},
@@ -101,7 +102,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationDelete,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationDelete},
+			ResourceType:  datamodel.AzurePlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AzurePlaneResourceType, Method: v1.OperationDelete},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewDefaultSyncDelete(opts, planeResourceOptions)
 			},
@@ -110,9 +112,9 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter: credentialCollectionRouter,
 			ResourceType: v20231001preview.AzureCredentialType,
 			Method:       v1.OperationList,
-			ControllerFactory: func(opt armrpc_controller.Options) (armrpc_controller.Controller, error) {
+			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewListResources(opt,
-					armrpc_controller.ResourceOptions[datamodel.AzureCredential]{
+					controller.ResourceOptions[datamodel.AzureCredential]{
 						RequestConverter:  converter.AzureCredentialDataModelFromVersioned,
 						ResponseConverter: converter.AzureCredentialDataModelToVersioned,
 					},
@@ -123,9 +125,9 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter: credentialResourceRouter,
 			ResourceType: v20231001preview.AzureCredentialType,
 			Method:       v1.OperationGet,
-			ControllerFactory: func(opt armrpc_controller.Options) (armrpc_controller.Controller, error) {
+			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewGetResource(opt,
-					armrpc_controller.ResourceOptions[datamodel.AzureCredential]{
+					controller.ResourceOptions[datamodel.AzureCredential]{
 						RequestConverter:  converter.AzureCredentialDataModelFromVersioned,
 						ResponseConverter: converter.AzureCredentialDataModelToVersioned,
 					},
@@ -136,7 +138,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter: credentialResourceRouter,
 			Method:       v1.OperationPut,
 			ResourceType: v20231001preview.AzureCredentialType,
-			ControllerFactory: func(opt armrpc_controller.Options) (armrpc_controller.Controller, error) {
+			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return azure_credential_ctrl.NewCreateOrUpdateAzureCredential(opt, secretClient)
 			},
 		},
@@ -144,7 +146,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter: credentialResourceRouter,
 			Method:       v1.OperationDelete,
 			ResourceType: v20231001preview.AzureCredentialType,
-			ControllerFactory: func(opt armrpc_controller.Options) (armrpc_controller.Controller, error) {
+			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return azure_credential_ctrl.NewDeleteAzureCredential(opt, secretClient)
 			},
 		},
@@ -158,14 +160,24 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter:      planeResourceRouter,
 			Path:              server.CatchAllPath,
 			OperationType:     &v1.OperationType{Type: OperationTypeUCPAzureProxy, Method: v1.OperationProxy},
+			ResourceType:      OperationTypeUCPAzureProxy,
 			ControllerFactory: planes_ctrl.NewProxyController,
 		},
 	}
 
-	ctrlOpts := armrpc_controller.Options{
-		Address:      m.options.Address,
-		PathBase:     m.options.PathBase,
-		DataProvider: m.options.DataProvider,
+	databaseClient, err := m.options.DatabaseProvider.GetClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ctrlOpts := controller.Options{
+		Address:        m.options.Config.Server.Address(),
+		DatabaseClient: databaseClient,
+		PathBase:       m.options.Config.Server.PathBase,
+		StatusManager:  m.options.StatusManager,
+
+		KubeClient:   nil, // Unused by Azure module
+		ResourceType: "",  // Set dynamically
 	}
 
 	for _, h := range handlerOptions {

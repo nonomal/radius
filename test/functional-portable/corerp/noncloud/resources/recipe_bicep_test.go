@@ -85,7 +85,7 @@ func Test_BicepRecipe_ParametersAndOutputs(t *testing.T) {
 			},
 			K8sObjects: &validation.K8sObjectSet{},
 			PostStepVerify: func(ctx context.Context, t *testing.T, test rp.RPTest) {
-				resource, err := test.Options.ManagementClient.ShowResource(ctx, "Applications.Core/extenders", name)
+				resource, err := test.Options.ManagementClient.GetResource(ctx, "Applications.Core/extenders", name)
 				require.NoError(t, err)
 
 				text, err := json.MarshalIndent(resource, "", "  ")
@@ -139,7 +139,7 @@ func Test_BicepRecipe_ContextParameter(t *testing.T) {
 			},
 			K8sObjects: &validation.K8sObjectSet{},
 			PostStepVerify: func(ctx context.Context, t *testing.T, test rp.RPTest) {
-				resource, err := test.Options.ManagementClient.ShowResource(ctx, "Applications.Core/extenders", name)
+				resource, err := test.Options.ManagementClient.GetResource(ctx, "Applications.Core/extenders", name)
 				require.NoError(t, err)
 
 				text, err := json.MarshalIndent(resource, "", "  ")
@@ -239,7 +239,7 @@ func Test_BicepRecipe_ResourceCreation(t *testing.T) {
 			// This currently fails.
 			SkipResourceDeletion: true,
 			PostStepVerify: func(ctx context.Context, t *testing.T, test rp.RPTest) {
-				resource, err := test.Options.ManagementClient.ShowResource(ctx, "Applications.Core/extenders", name)
+				resource, err := test.Options.ManagementClient.GetResource(ctx, "Applications.Core/extenders", name)
 				require.NoError(t, err)
 
 				text, err := json.MarshalIndent(resource, "", "  ")
@@ -392,13 +392,26 @@ func Test_BicepRecipe_LanguageFailure(t *testing.T) {
 				Code:            recipes.RecipeDeploymentFailed,
 				MessageContains: "failed to deploy recipe",
 				Details: []step.DeploymentErrorDetail{
+					// The column index flagged for the error is different depending on what version of the extension is used.
+					// These values might be different between functional test and long running test runs.
+					// Instead of hardcoding values, we'll validate that the rest of the message is correct.
 					{
 						Code:            "DeploymentFailed",
 						MessageContains: "At least one resource deployment operation failed. Please see the details for the specific operation that failed.",
 						Details: []step.DeploymentErrorDetail{
 							{
 								Code:            "InvalidTemplate",
-								MessageContains: "Unable to process template language expressions for resource 'Applications.Core/extenders/corerp-resources-recipe-bicep-langugagefailure-failure' at line '1' and column '442'. 'Unable to evaluate the template language function 'substring'. The index parameter cannot be larger than the length of the string. The index parameter: '10', the length of the string parameter: '4'. Please see https://aka.ms/arm-function-substring for usage details.'",
+								MessageContains: "Unable to process template language expressions for resource 'Applications.Core/extenders/corerp-resources-recipe-bicep-langugagefailure-failure' at line '1' and column",
+							},
+						},
+					},
+					{
+						Code:            "DeploymentFailed",
+						MessageContains: "At least one resource deployment operation failed. Please see the details for the specific operation that failed.",
+						Details: []step.DeploymentErrorDetail{
+							{
+								Code:            "InvalidTemplate",
+								MessageContains: "'Unable to evaluate the template language function 'substring'. The index parameter cannot be larger than the length of the string. The index parameter: '10', the length of the string parameter: '4'. Please see https://aka.ms/arm-function-substring for usage details.'",
 							},
 						},
 					},

@@ -22,14 +22,15 @@ import (
 	"fmt"
 
 	"github.com/radius-project/radius/pkg/azure/tokencredentials"
+	"github.com/radius-project/radius/pkg/components/secret"
+	"github.com/radius-project/radius/pkg/components/secret/secretprovider"
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/sdk"
 	"github.com/radius-project/radius/pkg/ucp/credentials"
+	ucp_datamodel "github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/resources"
 	resources_azure "github.com/radius-project/radius/pkg/ucp/resources/azure"
-	"github.com/radius-project/radius/pkg/ucp/secret"
-	ucp_provider "github.com/radius-project/radius/pkg/ucp/secret/provider"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 )
 
@@ -38,22 +39,31 @@ import (
 const (
 	AzureProviderName = "azurerm"
 
-	azureFeaturesParam     = "features"
-	azureSubIDParam        = "subscription_id"
-	azureClientIDParam     = "client_id"
-	azureClientSecretParam = "client_secret"
-	azureTenantIDParam     = "tenant_id"
+	azureFeaturesParam          = "features"
+	azureSubIDParam             = "subscription_id"
+	azureClientIDParam          = "client_id"
+	azureClientSecretParam      = "client_secret"
+	azureTenantIDParam          = "tenant_id"
+	azureUseOIDCParam           = "use_oidc"
+	azureUseCLIParam            = "use_cli"
+	azureOIDCTokenFilePathParam = "oidc_token_file_path"
+
+	// The Azure AD Workload Identity Mutating Admission Webhook projects a signed service account token to
+	// this well known path.
+	// https://azure.github.io/azure-workload-identity/docs/installation/mutating-admission-webhook.html
+	// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs#argument-reference
+	azureOIDCTokenFilePath = "/var/run/secrets/azure/tokens/azure-identity-token"
 )
 
 var _ Provider = (*azureProvider)(nil)
 
 type azureProvider struct {
 	ucpConn        sdk.Connection
-	secretProvider *ucp_provider.SecretProvider
+	secretProvider *secretprovider.SecretProvider
 }
 
 // NewAzureProvider creates a new AzureProvider instance.
-func NewAzureProvider(ucpConn sdk.Connection, secretProvider *ucp_provider.SecretProvider) Provider {
+func NewAzureProvider(ucpConn sdk.Connection, secretProvider *secretprovider.SecretProvider) Provider {
 	return &azureProvider{ucpConn: ucpConn, secretProvider: secretProvider}
 }
 
@@ -119,19 +129,38 @@ func fetchAzureCredentials(ctx context.Context, azureCredentialsProvider credent
 	credentials, err := azureCredentialsProvider.Fetch(ctx, credentials.AzureCloud, "default")
 	if err != nil {
 		if errors.Is(err, &secret.ErrNotFound{}) {
-			logger.Info("AWS credentials are not registered, skipping credentials configuration.")
+			logger.Info("Azure credentials are not registered, skipping credentials configuration.")
 			return nil, nil
 		}
 
 		return nil, err
 	}
 
-	if credentials == nil || credentials.ClientID == "" || credentials.TenantID == "" || credentials.ClientSecret == "" {
-		logger.Info("Azure credentials are not registered, skipping credentials configuration.")
+	switch credentials.Kind {
+	case ucp_datamodel.AzureServicePrincipalCredentialKind:
+		if credentials.ServicePrincipal == nil ||
+			credentials.ServicePrincipal.ClientID == "" ||
+			credentials.ServicePrincipal.TenantID == "" ||
+			credentials.ServicePrincipal.ClientSecret == "" {
+			logger.Info("Azure service principal credentials are not registered, skipping credentials configuration.")
+			return nil, nil
+		}
+
+		return credentials, nil
+	case ucp_datamodel.AzureWorkloadIdentityCredentialKind:
+		if credentials.WorkloadIdentity == nil ||
+			credentials.WorkloadIdentity.ClientID == "" ||
+			credentials.WorkloadIdentity.TenantID == "" {
+			logger.Info("Azure workload identity credentials are not registered, skipping credentials configuration.")
+			return nil, nil
+		}
+
+		return credentials, nil
+	default:
+		logger.Info("Azure credential is not supported, skipping credentials configuration, kind: %s", credentials.Kind)
 		return nil, nil
 	}
 
-	return credentials, nil
 }
 
 func (p *azureProvider) generateProviderConfigMap(configMap map[string]any, credentials *credentials.AzureCredential, subscriptionID string) map[string]any {
@@ -139,10 +168,29 @@ func (p *azureProvider) generateProviderConfigMap(configMap map[string]any, cred
 		configMap[azureSubIDParam] = subscriptionID
 	}
 
-	if credentials != nil && credentials.ClientID != "" && credentials.TenantID != "" && credentials.ClientSecret != "" {
-		configMap[azureClientIDParam] = credentials.ClientID
-		configMap[azureClientSecretParam] = credentials.ClientSecret
-		configMap[azureTenantIDParam] = credentials.TenantID
+	switch credentials.Kind {
+	case ucp_datamodel.AzureServicePrincipalCredentialKind:
+		if credentials.ServicePrincipal != nil &&
+			credentials.ServicePrincipal.ClientID != "" &&
+			credentials.ServicePrincipal.TenantID != "" &&
+			credentials.ServicePrincipal.ClientSecret != "" {
+			configMap[azureClientIDParam] = credentials.ServicePrincipal.ClientID
+			configMap[azureClientSecretParam] = credentials.ServicePrincipal.ClientSecret
+			configMap[azureTenantIDParam] = credentials.ServicePrincipal.TenantID
+		}
+	case ucp_datamodel.AzureWorkloadIdentityCredentialKind:
+		if credentials.WorkloadIdentity != nil &&
+			credentials.WorkloadIdentity.ClientID != "" &&
+			credentials.WorkloadIdentity.TenantID != "" {
+
+			// Use OIDC for Workload Identity
+			// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/service_principal_oidc
+			configMap[azureClientIDParam] = credentials.WorkloadIdentity.ClientID
+			configMap[azureTenantIDParam] = credentials.WorkloadIdentity.TenantID
+			configMap[azureUseCLIParam] = false
+			configMap[azureUseOIDCParam] = true
+			configMap[azureOIDCTokenFilePathParam] = azureOIDCTokenFilePath
+		}
 	}
 
 	return configMap

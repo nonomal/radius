@@ -18,9 +18,7 @@
         "disableDefaultEnvVars": true,
         "iam": {
           "kind": "azure",
-          "roles": [
-            "read"
-          ]
+          "roles": ["read"]
         }
       }
     },
@@ -35,13 +33,19 @@
         "timeoutSeconds": 5,
         "containerPort": 8080
       },
-      "command": [
-        "/bin/sh"
-      ],
-      "args": [
-        "-c",
-        "while true; do echo hello; sleep 10;done"
-      ],
+      "env": {
+        "DB_USER": { "value": "DB_USER" },
+        "DB_PASSWORD": {
+          "valueFrom": {
+            "secretRef": {
+              "source": "secret.id",
+              "key": "DB_PASSWORD"
+            }
+          }
+        }
+      },
+      "command": ["/bin/sh"],
+      "args": ["-c", "while true; do echo hello; sleep 10;done"],
       "workingDir": "/app"
     },
     "identity": {

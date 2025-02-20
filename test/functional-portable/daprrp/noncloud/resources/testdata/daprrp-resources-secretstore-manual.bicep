@@ -1,4 +1,4 @@
-import radius as radius
+extension radius
 
 param magpieimage string
 
@@ -50,7 +50,9 @@ resource secretstore 'Applications.Dapr/secretStores@2023-10-01-preview' = {
     resourceProvisioning: 'manual'
     type: 'secretstores.kubernetes'
     metadata: {
-      vaultName: 'test'
+      vaultName: {
+        value: 'test'
+      }
     }
     version: 'v1'
   }

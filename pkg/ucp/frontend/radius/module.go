@@ -18,25 +18,27 @@ package radius
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/radius-project/radius/pkg/ucp"
 	"github.com/radius-project/radius/pkg/ucp/frontend/modules"
 	"github.com/radius-project/radius/pkg/validator"
 )
 
 // NewModule creates a new Radius module.
-func NewModule(options modules.Options) *Module {
+func NewModule(options *ucp.Options) *Module {
 	router := chi.NewRouter()
 	router.NotFound(validator.APINotFoundHandler())
 	router.MethodNotAllowed(validator.APIMethodNotAllowedHandler())
 
-	return &Module{options: options, router: router}
+	return &Module{options: options, router: router, defaultDownstream: options.Config.Routing.DefaultDownstreamEndpoint}
 }
 
 var _ modules.Initializer = &Module{}
 
 // Module defines the module for Radius functionality.
 type Module struct {
-	options modules.Options
-	router  chi.Router
+	options           *ucp.Options
+	router            chi.Router
+	defaultDownstream string
 }
 
 // PlaneType returns the type of plane this module is for.

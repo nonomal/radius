@@ -68,11 +68,12 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					GetEnvDetails(gomock.Any(), "prod").
+					GetEnvironment(gomock.Any(), "prod").
 					Return(v20231001preview.EnvironmentResource{}, nil).
 					Times(1)
 			},
 		},
+
 		{
 			Name:          "rad run - app set by directory config",
 			Input:         []string{"app.bicep", "-e", "prod"},
@@ -88,7 +89,7 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					GetEnvDetails(gomock.Any(), "prod").
+					GetEnvironment(gomock.Any(), "prod").
 					Return(v20231001preview.EnvironmentResource{}, nil).
 					Times(1)
 			},
@@ -103,7 +104,7 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					GetEnvDetails(gomock.Any(), radcli.TestEnvironmentName).
+					GetEnvironment(gomock.Any(), "/planes/radius/local/resourceGroups/test-resource-group/providers/Applications.Core/environments/test-environment").
 					Return(v20231001preview.EnvironmentResource{}, nil).
 					Times(1)
 			},
@@ -230,7 +231,7 @@ func Test_Run(t *testing.T) {
 
 	clientMock := clients.NewMockApplicationsManagementClient(ctrl)
 	clientMock.EXPECT().
-		GetEnvDetails(gomock.Any(), "test-environment").
+		GetEnvironment(gomock.Any(), "test-environment").
 		Return(v20231001preview.EnvironmentResource{}, nil).
 		Times(1)
 	clientMock.EXPECT().
@@ -238,7 +239,7 @@ func Test_Run(t *testing.T) {
 		Return(nil).
 		Times(1)
 	clientMock.EXPECT().
-		ShowApplication(gomock.Any(), "test-application").
+		GetApplication(gomock.Any(), "test-application").
 		Return(app, nil).
 		Times(1)
 
@@ -265,12 +266,12 @@ func Test_Run(t *testing.T) {
 				ApplicationsManagementClient: clientMock,
 			},
 
-			FilePath:        "app.bicep",
-			ApplicationName: "test-application",
-			EnvironmentName: radcli.TestEnvironmentName,
-			Parameters:      map[string]map[string]any{},
-			Workspace:       workspace,
-			Providers:       providers,
+			FilePath:            "app.bicep",
+			ApplicationName:     "test-application",
+			EnvironmentNameOrID: radcli.TestEnvironmentName,
+			Parameters:          map[string]map[string]any{},
+			Workspace:           workspace,
+			Providers:           providers,
 		},
 		Logstream:        logstreamMock,
 		Portforward:      portforwardMock,
@@ -405,7 +406,7 @@ func Test_Run_NoDashboard(t *testing.T) {
 
 	clientMock := clients.NewMockApplicationsManagementClient(ctrl)
 	clientMock.EXPECT().
-		GetEnvDetails(gomock.Any(), "test-environment").
+		GetEnvironment(gomock.Any(), "test-environment").
 		Return(v20231001preview.EnvironmentResource{}, nil).
 		Times(1)
 	clientMock.EXPECT().
@@ -413,7 +414,7 @@ func Test_Run_NoDashboard(t *testing.T) {
 		Return(nil).
 		Times(1)
 	clientMock.EXPECT().
-		ShowApplication(gomock.Any(), "test-application").
+		GetApplication(gomock.Any(), "test-application").
 		Return(app, nil).
 		Times(1)
 
@@ -440,12 +441,12 @@ func Test_Run_NoDashboard(t *testing.T) {
 				ApplicationsManagementClient: clientMock,
 			},
 
-			FilePath:        "app.bicep",
-			ApplicationName: "test-application",
-			EnvironmentName: radcli.TestEnvironmentName,
-			Parameters:      map[string]map[string]any{},
-			Workspace:       workspace,
-			Providers:       providers,
+			FilePath:            "app.bicep",
+			ApplicationName:     "test-application",
+			EnvironmentNameOrID: radcli.TestEnvironmentName,
+			Parameters:          map[string]map[string]any{},
+			Workspace:           workspace,
+			Providers:           providers,
 		},
 		Logstream:        logstreamMock,
 		Portforward:      portforwardMock,

@@ -22,10 +22,10 @@ import (
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	armrpc_controller "github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	armrpc_rest "github.com/radius-project/radius/pkg/armrpc/rest"
+	"github.com/radius-project/radius/pkg/components/secret"
 	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/datamodel/converter"
 	"github.com/radius-project/radius/pkg/ucp/frontend/controller/credentials"
-	"github.com/radius-project/radius/pkg/ucp/secret"
 )
 
 var _ armrpc_controller.Controller = (*CreateOrUpdateAWSCredential)(nil)
@@ -59,7 +59,7 @@ func (c *CreateOrUpdateAWSCredential) Run(ctx context.Context, w http.ResponseWr
 		return nil, err
 	}
 
-	if newResource.Properties.Kind != datamodel.AWSCredentialKind {
+	if newResource.Properties.Kind != datamodel.AWSAccessKeyCredentialKind && newResource.Properties.Kind != datamodel.AWSIRSACredentialKind {
 		return armrpc_rest.NewBadRequestResponse("Invalid Credential Kind"), nil
 	}
 
@@ -84,7 +84,9 @@ func (c *CreateOrUpdateAWSCredential) Run(ctx context.Context, w http.ResponseWr
 	}
 
 	// Do not save the secret in metadata store.
-	newResource.Properties.AWSCredential.SecretAccessKey = ""
+	if newResource.Properties.AWSCredential.Kind == datamodel.AWSAccessKeyCredentialKind {
+		newResource.Properties.AWSCredential.AccessKeyCredential.SecretAccessKey = ""
+	}
 
 	newResource.SetProvisioningState(v1.ProvisioningStateSucceeded)
 	newEtag, err := c.SaveResource(ctx, serviceCtx.ResourceID.String(), newResource, etag)

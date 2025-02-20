@@ -17,6 +17,7 @@ limitations under the License.
 package corerp
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -42,14 +43,16 @@ func Test_ResourceList(t *testing.T) {
 	scope := options.ManagementClient.(*clients.UCPApplicationsManagementClient).RootScope
 	clientOptions := options.ManagementClient.(*clients.UCPApplicationsManagementClient).ClientOptions
 
-	parsed, err := resources.ParseScope("/" + scope)
+	parsed, err := resources.ParseScope(scope)
 	require.NoError(t, err)
 	require.NotEmpty(t, parsed.FindScope(resources_radius.ScopeResourceGroups), "workspace scope must contain resource group segment")
 
 	resourceGroupScope := parsed.String()
 
+	resourceTypesList, err := options.ManagementClient.(*clients.UCPApplicationsManagementClient).ListAllResourceTypesNames(context.Background(), "local")
+	require.NoError(t, err)
 	resourceTypes := []string{"Applications.Core/applications", "Applications.Core/environments"}
-	resourceTypes = append(resourceTypes, clients.ResourceTypesList...)
+	resourceTypes = append(resourceTypes, resourceTypesList...)
 
 	listResources := func(t *testing.T, resourceType string) {
 		ctx, cancel := testcontext.NewWithCancel(t)

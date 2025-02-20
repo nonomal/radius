@@ -1,0 +1,10 @@
+{
+  "id": "/planes/radius/local/providers/System.Resources/resourceProviders/Applications.Test/resourceTypes/testResources",
+  "name": "testResources",
+  "type": "System.Resources/resourceProviders/resourceTypes",
+  "provisioningState": "Succeeded",
+  "properties": {
+    "capabilities": ["SupportsRecipes"],
+    "defaultApiVersion": "2025-01-01"
+  }
+}

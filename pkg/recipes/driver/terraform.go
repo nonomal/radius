@@ -27,20 +27,18 @@ import (
 
 	"github.com/google/uuid"
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
-	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
+	"github.com/radius-project/radius/pkg/components/kubernetesclient/kubernetesclientprovider"
+	"github.com/radius-project/radius/pkg/components/secret/secretprovider"
 	rpv1 "github.com/radius-project/radius/pkg/rp/v1"
 	"golang.org/x/exp/slices"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/radius-project/radius/pkg/recipes"
-
 	"github.com/radius-project/radius/pkg/recipes/terraform"
 	recipes_util "github.com/radius-project/radius/pkg/recipes/util"
 	"github.com/radius-project/radius/pkg/sdk"
 	resources "github.com/radius-project/radius/pkg/ucp/resources"
 	awsresources "github.com/radius-project/radius/pkg/ucp/resources/aws"
 	kubernetesresources "github.com/radius-project/radius/pkg/ucp/resources/kubernetes"
-	ucp_provider "github.com/radius-project/radius/pkg/ucp/secret/provider"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 	"github.com/radius-project/radius/pkg/ucp/util"
 
@@ -50,9 +48,9 @@ import (
 var _ Driver = (*terraformDriver)(nil)
 
 // NewTerraformDriver creates a new instance of driver to execute a Terraform recipe.
-func NewTerraformDriver(ucpConn sdk.Connection, secretProvider *ucp_provider.SecretProvider, options TerraformOptions, k8sClientSet kubernetes.Interface) Driver {
+func NewTerraformDriver(ucpConn sdk.Connection, secretProvider *secretprovider.SecretProvider, options TerraformOptions, kubernetesClients kubernetesclientprovider.KubernetesClientProvider) Driver {
 	return &terraformDriver{
-		terraformExecutor: terraform.NewExecutor(ucpConn, secretProvider, k8sClientSet),
+		terraformExecutor: terraform.NewExecutor(ucpConn, secretProvider, kubernetesClients),
 		options:           options,
 	}
 }
@@ -87,12 +85,16 @@ func (d *terraformDriver) Execute(ctx context.Context, opts ExecuteOptions) (*re
 		}
 	}()
 
-	// Add credential information to .gitconfig if module source is of type git.
-	if strings.HasPrefix(opts.Definition.TemplatePath, "git::") && !reflect.DeepEqual(opts.BaseOptions.Secrets, v20231001preview.SecretStoresClientListSecretsResponse{}) {
-		err := addSecretsToGitConfig(opts.BaseOptions.Secrets, &opts.Recipe, opts.Definition.TemplatePath)
-		if err != nil {
-			return nil, err
-		}
+	// Get the secret store ID associated with the git private terraform repository source.
+	secretStoreID, err := GetPrivateGitRepoSecretStoreID(opts.Configuration, opts.Definition.TemplatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add credential information to .gitconfig for module source of type git if applicable.
+	err = addSecretsToGitConfigIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if err != nil {
+		return nil, err
 	}
 
 	tfState, err := d.terraformExecutor.Deploy(ctx, terraform.Options{
@@ -100,14 +102,12 @@ func (d *terraformDriver) Execute(ctx context.Context, opts ExecuteOptions) (*re
 		EnvConfig:      &opts.Configuration,
 		ResourceRecipe: &opts.Recipe,
 		EnvRecipe:      &opts.Definition,
+		Secrets:        opts.Secrets,
 	})
 
-	// Unset credential information from .gitconfig if module source is of type git.
-	if strings.HasPrefix(opts.Definition.TemplatePath, "git::") && !reflect.DeepEqual(opts.BaseOptions.Secrets, v20231001preview.SecretStoresClientListSecretsResponse{}) {
-		unsetError := unsetSecretsFromGitConfig(opts.BaseOptions.Secrets, opts.Definition.TemplatePath)
-		if unsetError != nil {
-			return nil, unsetError
-		}
+	unsetError := unsetGitConfigForDirIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if unsetError != nil {
+		return nil, unsetError
 	}
 
 	if err != nil {
@@ -135,13 +135,19 @@ func (d *terraformDriver) Delete(ctx context.Context, opts DeleteOptions) error 
 			logger.Info(fmt.Sprintf("Failed to cleanup Terraform execution directory %q. Err: %s", requestDirPath, err.Error()))
 		}
 	}()
-	// Add credential information to .gitconfig if module source is of type git.
-	if strings.HasPrefix(opts.Definition.TemplatePath, "git::") && !reflect.DeepEqual(opts.BaseOptions.Secrets, v20231001preview.SecretStoresClientListSecretsResponse{}) {
-		err := addSecretsToGitConfig(opts.BaseOptions.Secrets, &opts.Recipe, opts.Definition.TemplatePath)
-		if err != nil {
-			return err
-		}
+
+	// Get the secret store ID associated with the git private terraform repository source.
+	secretStoreID, err := GetPrivateGitRepoSecretStoreID(opts.Configuration, opts.Definition.TemplatePath)
+	if err != nil {
+		return err
 	}
+
+	// Add credential information to .gitconfig for module source of type git if applicable.
+	err = addSecretsToGitConfigIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if err != nil {
+		return err
+	}
+
 	err = d.terraformExecutor.Delete(ctx, terraform.Options{
 		RootDir:        requestDirPath,
 		EnvConfig:      &opts.Configuration,
@@ -149,12 +155,9 @@ func (d *terraformDriver) Delete(ctx context.Context, opts DeleteOptions) error 
 		EnvRecipe:      &opts.Definition,
 	})
 
-	// Unset credential information from .gitconfig if module source is of type git.
-	if strings.HasPrefix(opts.Definition.TemplatePath, "git::") && !reflect.DeepEqual(opts.BaseOptions.Secrets, v20231001preview.SecretStoresClientListSecretsResponse{}) {
-		unsetError := unsetSecretsFromGitConfig(opts.BaseOptions.Secrets, opts.Definition.TemplatePath)
-		if unsetError != nil {
-			return unsetError
-		}
+	unsetError := unsetGitConfigForDirIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if unsetError != nil {
+		return unsetError
 	}
 
 	if err != nil {
@@ -259,11 +262,29 @@ func (d *terraformDriver) GetRecipeMetadata(ctx context.Context, opts BaseOption
 		}
 	}()
 
+	// Get the secret store ID associated with the git private terraform repository source.
+	secretStoreID, err := GetPrivateGitRepoSecretStoreID(opts.Configuration, opts.Definition.TemplatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add credential information to .gitconfig for module source of type git if applicable.
+	err = addSecretsToGitConfigIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if err != nil {
+		return nil, err
+	}
+
 	recipeData, err := d.terraformExecutor.GetRecipeMetadata(ctx, terraform.Options{
 		RootDir:        requestDirPath,
 		ResourceRecipe: &opts.Recipe,
 		EnvRecipe:      &opts.Definition,
 	})
+
+	unsetError := unsetGitConfigForDirIfApplicable(secretStoreID, opts.Secrets, requestDirPath, opts.Definition.TemplatePath)
+	if unsetError != nil {
+		return nil, unsetError
+	}
+
 	if err != nil {
 		return nil, recipes.NewRecipeError(recipes.RecipeGetMetadataFailed, err.Error(), "", recipes.GetErrorDetails(err))
 	}
@@ -271,15 +292,34 @@ func (d *terraformDriver) GetRecipeMetadata(ctx context.Context, opts BaseOption
 	return recipeData, nil
 }
 
-// FindSecretIDs is used to retrieve the secret reference associated with private terraform module source.
-// As of today, it only supports retrieving secret references associated with private git repositories.
-func (d *terraformDriver) FindSecretIDs(ctx context.Context, envConfig recipes.Configuration, definition recipes.EnvironmentDefinition) (string, error) {
+// FindSecretIDs is used to retrieve a map of secretStoreIDs and corresponding secret keys.
+// associated with the given environment configuration and environment definition.
+func (d *terraformDriver) FindSecretIDs(ctx context.Context, envConfig recipes.Configuration, definition recipes.EnvironmentDefinition) (secretStoreIDResourceKeys map[string][]string, err error) {
+	secretStoreIDResourceKeys = make(map[string][]string)
 
-	// We can move the GetSecretStoreID() implementation here when we have containerization.
-	// Today we use this function in config.go to check for secretstore to add prefix to the template path.
-	// GetSecretStoreID is added outside of driver package because it created cyclic dependency between driver and config packages.
+	// Get the secret store ID associated with the git private terraform repository source.
+	secretStoreID, err := GetPrivateGitRepoSecretStoreID(envConfig, definition.TemplatePath)
+	if err != nil {
+		return nil, err
+	}
 
-	return recipes.GetSecretStoreID(envConfig, definition.TemplatePath)
+	if secretStoreID != "" {
+		secretStoreIDResourceKeys[secretStoreID] = []string{PrivateRegistrySecretKey_Pat, PrivateRegistrySecretKey_Username}
+	}
+
+	// Get the secret IDs and associated keys in provider configuration and environment variables
+	providerSecretIDs := terraform.GetProviderEnvSecretIDs(envConfig)
+
+	// Merge secretStoreIDResourceKeys with providerSecretIDs
+	for secretStoreID, keys := range providerSecretIDs {
+		if _, ok := secretStoreIDResourceKeys[secretStoreID]; !ok {
+			secretStoreIDResourceKeys[secretStoreID] = keys
+		} else {
+			secretStoreIDResourceKeys[secretStoreID] = append(secretStoreIDResourceKeys[secretStoreID], keys...)
+		}
+	}
+
+	return secretStoreIDResourceKeys, nil
 }
 
 // getDeployedOutputResources is used to the get the resource IDs by parsing the terraform state for resource information and using it to create UCP qualified IDs.

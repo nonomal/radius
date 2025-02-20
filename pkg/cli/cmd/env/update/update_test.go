@@ -120,7 +120,7 @@ func Test_Update(t *testing.T) {
 
 		appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 		appManagementClient.EXPECT().
-			GetEnvDetails(gomock.Any(), "test-env").
+			GetEnvironment(gomock.Any(), "test-env").
 			Return(environment, expectedError).
 			Times(1)
 
@@ -172,7 +172,7 @@ func Test_Update(t *testing.T) {
 
 		appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 		appManagementClient.EXPECT().
-			GetEnvDetails(gomock.Any(), "test-env").
+			GetEnvironment(gomock.Any(), "test-env").
 			Return(environment, expectedError).
 			Times(1)
 
@@ -220,7 +220,7 @@ func Test_Update(t *testing.T) {
 
 		appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 		appManagementClient.EXPECT().
-			GetEnvDetails(gomock.Any(), "test-env").
+			GetEnvironment(gomock.Any(), "test-env").
 			Return(environment, nil).
 			Times(1)
 
@@ -233,15 +233,18 @@ func Test_Update(t *testing.T) {
 			},
 		}
 
-		testEnvProperties := &corerp.EnvironmentProperties{
-			Providers: testProviders,
+		expectedResource := &corerp.EnvironmentResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Properties: &corerp.EnvironmentProperties{
+				Providers: testProviders,
+			},
 		}
 
 		expectedError := errors.New("failed to update the environment")
 		expectedErrorMessage := fmt.Sprintf("Failed to apply cloud provider scope to the environment %q. Cause: %s.", "test-env", expectedError.Error())
 
 		appManagementClient.EXPECT().
-			CreateEnvironment(gomock.Any(), "test-env", v1.LocationGlobal, testEnvProperties).
+			CreateOrUpdateEnvironment(gomock.Any(), "test-env", expectedResource).
 			Return(expectedError).
 			Times(1)
 
@@ -287,7 +290,7 @@ func Test_Update(t *testing.T) {
 
 		appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 		appManagementClient.EXPECT().
-			GetEnvDetails(gomock.Any(), "test-env").
+			GetEnvironment(gomock.Any(), "test-env").
 			Return(environment, nil).
 			Times(1)
 
@@ -310,7 +313,10 @@ func Test_Update(t *testing.T) {
 			},
 		}
 		appManagementClient.EXPECT().
-			CreateEnvironment(gomock.Any(), "test-env", v1.LocationGlobal, testEnvProperties).
+			CreateOrUpdateEnvironment(gomock.Any(), "test-env", &corerp.EnvironmentResource{
+				Location:   to.Ptr(v1.LocationGlobal),
+				Properties: testEnvProperties,
+			}).
 			Return(nil).
 			Times(1)
 
@@ -467,14 +473,17 @@ func Test_Update(t *testing.T) {
 
 				appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 				appManagementClient.EXPECT().
-					GetEnvDetails(gomock.Any(), "test-env").
+					GetEnvironment(gomock.Any(), "test-env").
 					Return(existingEnvironment, nil).
 					Times(1)
 
 				existingEnvironment.Properties.Providers = tc.expectedProviders
 
 				appManagementClient.EXPECT().
-					CreateEnvironment(gomock.Any(), "test-env", v1.LocationGlobal, existingEnvironment.Properties).
+					CreateOrUpdateEnvironment(gomock.Any(), "test-env", &corerp.EnvironmentResource{
+						Location:   to.Ptr(v1.LocationGlobal),
+						Properties: existingEnvironment.Properties,
+					}).
 					Return(nil).
 					Times(1)
 

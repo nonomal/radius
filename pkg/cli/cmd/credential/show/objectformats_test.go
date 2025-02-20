@@ -26,41 +26,102 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_credentialFormat_Azure(t *testing.T) {
+func Test_credentialFormatAzureServicePrincipal(t *testing.T) {
 	obj := credential.ProviderCredentialConfiguration{
 		CloudProviderStatus: credential.CloudProviderStatus{
 			Name:    "test",
 			Enabled: true,
 		},
 		AzureCredentials: &credential.AzureCredentialProperties{
-			ClientID: to.Ptr("test-client-id"),
-			TenantID: to.Ptr("test-tenant-id"),
+			Kind: to.Ptr("ServicePrincipal"),
+			ServicePrincipal: &credential.AzureServicePrincipalCredentialProperties{
+				ClientID: to.Ptr("test-client-id"),
+				TenantID: to.Ptr("test-tenant-id"),
+			},
 		},
 	}
 
 	buffer := &bytes.Buffer{}
-	err := output.Write(output.FormatTable, obj, buffer, credentialFormat("azure"))
+	credentialFormatOutput := credentialFormatAzureServicePrincipal()
+
+	err := output.Write(output.FormatTable, obj, buffer, credentialFormatOutput)
 	require.NoError(t, err)
 
-	expected := "NAME      REGISTERED  CLIENTID        TENANTID\ntest      true        test-client-id  test-tenant-id\n"
+	expected := "NAME      REGISTERED  KIND              CLIENTID        TENANTID\ntest      true        ServicePrincipal  test-client-id  test-tenant-id\n"
 	require.Equal(t, expected, buffer.String())
 }
 
-func Test_credentialFormat_AWS(t *testing.T) {
+func Test_credentialFormat_Azure_WorkloadIdentity(t *testing.T) {
+	obj := credential.ProviderCredentialConfiguration{
+		CloudProviderStatus: credential.CloudProviderStatus{
+			Name:    "test",
+			Enabled: true,
+		},
+		AzureCredentials: &credential.AzureCredentialProperties{
+			Kind: to.Ptr("WorkloadIdentity"),
+			WorkloadIdentity: &credential.AzureWorkloadIdentityCredentialProperties{
+				ClientID: to.Ptr("test-client-id"),
+				TenantID: to.Ptr("test-tenant-id"),
+			},
+		},
+	}
+
+	buffer := &bytes.Buffer{}
+	credentialFormatOutput := credentialFormatAzureWorkloadIdentity()
+
+	err := output.Write(output.FormatTable, obj, buffer, credentialFormatOutput)
+	require.NoError(t, err)
+
+	expected := "NAME      REGISTERED  KIND              CLIENTID        TENANTID\ntest      true        WorkloadIdentity  test-client-id  test-tenant-id\n"
+	require.Equal(t, expected, buffer.String())
+}
+
+func Test_credentialFormatAWSAccessKey(t *testing.T) {
 	obj := credential.ProviderCredentialConfiguration{
 		CloudProviderStatus: credential.CloudProviderStatus{
 			Name:    "test",
 			Enabled: true,
 		},
 		AWSCredentials: &credential.AWSCredentialProperties{
-			AccessKeyID: to.Ptr("test-access-key-id"),
+			Kind: to.Ptr("AccessKey"),
+			AccessKey: &credential.AWSAccessKeyCredentialProperties{
+				Kind:        to.Ptr("AccessKey"),
+				AccessKeyID: to.Ptr("test-access-key-id"),
+			},
 		},
 	}
 
 	buffer := &bytes.Buffer{}
-	err := output.Write(output.FormatTable, obj, buffer, credentialFormat("aws"))
+	credentialFormatOutput := credentialFormatAWSAccessKey()
+
+	err := output.Write(output.FormatTable, obj, buffer, credentialFormatOutput)
 	require.NoError(t, err)
 
-	expected := "NAME      REGISTERED  ACCESSKEYID\ntest      true        test-access-key-id\n"
+	expected := "NAME      REGISTERED  KIND       ACCESSKEYID\ntest      true        AccessKey  test-access-key-id\n"
+	require.Equal(t, expected, buffer.String())
+}
+
+func Test_credentialFormatAWSIRSA(t *testing.T) {
+	obj := credential.ProviderCredentialConfiguration{
+		CloudProviderStatus: credential.CloudProviderStatus{
+			Name:    "test",
+			Enabled: true,
+		},
+		AWSCredentials: &credential.AWSCredentialProperties{
+			Kind: to.Ptr("IRSA"),
+			IRSA: &credential.AWSIRSACredentialProperties{
+				Kind:    to.Ptr("IRSA"),
+				RoleARN: to.Ptr("test-role-arn"),
+			},
+		},
+	}
+
+	buffer := &bytes.Buffer{}
+	credentialFormatOutput := credentialFormatAWSIRSA()
+
+	err := output.Write(output.FormatTable, obj, buffer, credentialFormatOutput)
+	require.NoError(t, err)
+
+	expected := "NAME      REGISTERED  KIND      ROLEARN\ntest      true        IRSA      test-role-arn\n"
 	require.Equal(t, expected, buffer.String())
 }

@@ -7,7 +7,7 @@ updates:
     groups:
       all:
         patterns:
-        - "*"  
+          - "*"
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -15,12 +15,27 @@ updates:
     groups:
       all:
         patterns:
-        - "*"  
+          - "*"
   - package-ecosystem: "devcontainers"
-    directory: "/.devcontainer"
+    directory: "/"
     schedule:
       interval: weekly
     groups:
       all:
         patterns:
-        - "*"  
+          - "*"
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/typespec/"
+    schedule:
+      interval: "weekly"
+    groups:
+      typespec:
+        applies-to: version-updates
+        patterns:
+          - "*" # Matches all dependencies
+        update-types:
+          - "patch" # Only allow patch updates for regular version updates

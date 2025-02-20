@@ -18,6 +18,7 @@ package radinit
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
@@ -53,8 +54,9 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	runner := NewRunner(factory)
 
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize Radius",
+		Use:     "initialize",
+		Aliases: []string{"init"},
+		Short:   "Initialize Radius",
 		Long: `
 Interactively install the Radius control-plane and setup an environment.
 
@@ -211,8 +213,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	}()
 
 	if r.Options.Cluster.Install {
+		cliOptions := helm.CLIClusterOptions{
+			Radius: helm.ChartOptions{
+				SetArgs: r.Options.SetValues,
+			},
+		}
+
 		// Install radius control plane
-		err := installRadius(ctx, r)
+		err := installRadius(ctx, r, cliOptions)
 		if err != nil {
 			return clierrors.MessageWithCause(err, "Failed to install Radius.")
 		}
@@ -237,7 +245,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		// Initialize the application resource if it's not found. This supports the scenario where the application
 		// resource is not defined in bicep.
-		err = client.CreateApplicationIfNotFound(ctx, r.Options.Application.Name, corerp.ApplicationResource{
+		err = client.CreateApplicationIfNotFound(ctx, r.Options.Application.Name, &corerp.ApplicationResource{
 			Location: to.Ptr(v1.LocationGlobal),
 			Properties: &corerp.ApplicationProperties{
 				Environment: &r.Workspace.Environment,
@@ -277,40 +285,69 @@ func (r *Runner) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) getAzureCredential() ucp.AzureCredentialResource {
-	return ucp.AzureCredentialResource{
-		Location: to.Ptr(v1.LocationGlobal),
-		Type:     to.Ptr(cli_credential.AzureCredential),
-		Properties: &ucp.AzureServicePrincipalProperties{
-			Storage: &ucp.CredentialStorageProperties{
-				Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+func (r *Runner) getAzureCredential() (ucp.AzureCredentialResource, error) {
+	switch r.Options.CloudProviders.Azure.CredentialKind {
+	case azure.AzureCredentialKindServicePrincipal:
+		return ucp.AzureCredentialResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Type:     to.Ptr(cli_credential.AzureCredential),
+			Properties: &ucp.AzureServicePrincipalProperties{
+				Storage: &ucp.CredentialStorageProperties{
+					Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+				},
+				TenantID:     &r.Options.CloudProviders.Azure.ServicePrincipal.TenantID,
+				ClientID:     &r.Options.CloudProviders.Azure.ServicePrincipal.ClientID,
+				ClientSecret: &r.Options.CloudProviders.Azure.ServicePrincipal.ClientSecret,
 			},
-			TenantID:     &r.Options.CloudProviders.Azure.ServicePrincipal.TenantID,
-			ClientID:     &r.Options.CloudProviders.Azure.ServicePrincipal.ClientID,
-			ClientSecret: &r.Options.CloudProviders.Azure.ServicePrincipal.ClientSecret,
-		},
+		}, nil
+	case azure.AzureCredentialKindWorkloadIdentity:
+		return ucp.AzureCredentialResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Type:     to.Ptr(cli_credential.AzureCredential),
+			Properties: &ucp.AzureWorkloadIdentityProperties{
+				Storage: &ucp.CredentialStorageProperties{
+					Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+				},
+				TenantID: &r.Options.CloudProviders.Azure.WorkloadIdentity.TenantID,
+				ClientID: &r.Options.CloudProviders.Azure.WorkloadIdentity.ClientID,
+			},
+		}, nil
+	default:
+		return ucp.AzureCredentialResource{}, fmt.Errorf("unsupported Azure credential kind: %s", r.Options.CloudProviders.Azure.CredentialKind)
 	}
 }
 
-func (r *Runner) getAWSCredential() ucp.AwsCredentialResource {
-	return ucp.AwsCredentialResource{
-		Location: to.Ptr(v1.LocationGlobal),
-		Type:     to.Ptr(cli_credential.AWSCredential),
-		Properties: &ucp.AwsAccessKeyCredentialProperties{
-			Storage: &ucp.CredentialStorageProperties{
-				Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+func (r *Runner) getAWSCredential() (ucp.AwsCredentialResource, error) {
+	switch r.Options.CloudProviders.AWS.CredentialKind {
+	case aws.AWSCredentialKindAccessKey:
+		return ucp.AwsCredentialResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Type:     to.Ptr(cli_credential.AWSCredential),
+			Properties: &ucp.AwsAccessKeyCredentialProperties{
+				Storage: &ucp.CredentialStorageProperties{
+					Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+				},
+				AccessKeyID:     &r.Options.CloudProviders.AWS.AccessKey.AccessKeyID,
+				SecretAccessKey: &r.Options.CloudProviders.AWS.AccessKey.SecretAccessKey,
 			},
-			AccessKeyID:     &r.Options.CloudProviders.AWS.AccessKeyID,
-			SecretAccessKey: &r.Options.CloudProviders.AWS.SecretAccessKey,
-		},
+		}, nil
+	case aws.AWSCredentialKindIRSA:
+		return ucp.AwsCredentialResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Type:     to.Ptr(cli_credential.AWSCredential),
+			Properties: &ucp.AwsIRSACredentialProperties{
+				Storage: &ucp.CredentialStorageProperties{
+					Kind: to.Ptr(ucp.CredentialStorageKindInternal),
+				},
+				RoleARN: &r.Options.CloudProviders.AWS.IRSA.RoleARN,
+			},
+		}, nil
+	default:
+		return ucp.AwsCredentialResource{}, fmt.Errorf("unsupported AWS credential kind: %s", r.Options.CloudProviders.AWS.CredentialKind)
 	}
 }
 
-func installRadius(ctx context.Context, r *Runner) error {
-	cliOptions := helm.CLIClusterOptions{
-		Radius: helm.RadiusOptions{},
-	}
-
+func installRadius(ctx context.Context, r *Runner, cliOptions helm.CLIClusterOptions) error {
 	clusterOptions := helm.PopulateDefaultClusterOptions(cliOptions)
 
 	// Ignore existing radius installation because we already asked the user whether to re-install or not

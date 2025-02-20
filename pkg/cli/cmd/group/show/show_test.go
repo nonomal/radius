@@ -43,6 +43,15 @@ func Test_Validate(t *testing.T) {
 
 	testcases := []radcli.ValidateInput{
 		{
+			Name:          "Show Command with no args",
+			Input:         []string{},
+			ExpectedValid: true,
+			ConfigHolder: framework.ConfigHolder{
+				ConfigFilePath: "",
+				Config:         configWithWorkspace,
+			},
+		},
+		{
 			Name:          "Show Command with incorrect args",
 			Input:         []string{""},
 			ExpectedValid: false,
@@ -88,7 +97,7 @@ func Test_Run(t *testing.T) {
 		defer ctrl.Finish()
 
 		appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
-		appManagementClient.EXPECT().ShowUCPGroup(gomock.Any(), gomock.Any(), "testrg").Return(testResourceGroup, nil)
+		appManagementClient.EXPECT().GetResourceGroup(gomock.Any(), gomock.Any(), "testrg").Return(testResourceGroup, nil)
 
 		workspace := &workspaces.Workspace{
 			Connection: map[string]any{
