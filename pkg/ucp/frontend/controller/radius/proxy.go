@@ -25,19 +25,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	"github.com/radius-project/radius/pkg/armrpc/asyncoperation/statusmanager"
 	armrpc_controller "github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	armrpc_rest "github.com/radius-project/radius/pkg/armrpc/rest"
+	"github.com/radius-project/radius/pkg/components/database"
 	"github.com/radius-project/radius/pkg/middleware"
 	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/frontend/controller/resourcegroups"
 	"github.com/radius-project/radius/pkg/ucp/proxy"
 	"github.com/radius-project/radius/pkg/ucp/resources"
-	"github.com/radius-project/radius/pkg/ucp/store"
 	"github.com/radius-project/radius/pkg/ucp/trackedresource"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -55,7 +55,7 @@ const (
 )
 
 type updater interface {
-	Update(ctx context.Context, downstream string, id resources.ID, version string) error
+	Update(ctx context.Context, downstreamURL string, originalID resources.ID, version string) error
 }
 
 var _ armrpc_controller.Controller = (*ProxyController)(nil)
@@ -64,6 +64,9 @@ var _ armrpc_controller.Controller = (*ProxyController)(nil)
 type ProxyController struct {
 	armrpc_controller.Operation[*datamodel.RadiusPlane, datamodel.RadiusPlane]
 
+	// defaultDownstream is the address of the dynamic resource provider to proxy requests to.
+	defaultDownstream *url.URL
+
 	// transport is the http.RoundTripper to use for proxying requests. Can be overridden for testing.
 	transport http.RoundTripper
 
@@ -71,17 +74,20 @@ type ProxyController struct {
 	updater updater
 }
 
-// # Function Explanation
-//
 // NewProxyController creates a new ProxyPlane controller with the given options and returns it, or returns an error if the
 // controller cannot be created.
-func NewProxyController(opts armrpc_controller.Options) (armrpc_controller.Controller, error) {
-	transport := otelhttp.NewTransport(http.DefaultTransport)
-	updater := trackedresource.NewUpdater(opts.StorageClient, &http.Client{Transport: transport})
+func NewProxyController(opts armrpc_controller.Options, transport http.RoundTripper, defaultDownstream string) (armrpc_controller.Controller, error) {
+	parsedDefaultDownstream, err := url.Parse(defaultDownstream)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse default downstream URL: %w", err)
+	}
+
+	updater := trackedresource.NewUpdater(opts.DatabaseClient, &http.Client{Transport: transport})
 	return &ProxyController{
-		Operation: armrpc_controller.NewOperation(opts, armrpc_controller.ResourceOptions[datamodel.RadiusPlane]{}),
-		transport: transport,
-		updater:   updater,
+		Operation:         armrpc_controller.NewOperation(opts, armrpc_controller.ResourceOptions[datamodel.RadiusPlane]{}),
+		transport:         transport,
+		defaultDownstream: parsedDefaultDownstream,
+		updater:           updater,
 	}, nil
 }
 
@@ -98,16 +104,33 @@ func (p *ProxyController) Run(ctx context.Context, w http.ResponseWriter, req *h
 	// use the original URL instead.
 	requestCtx := v1.ARMRequestContextFromContext(ctx)
 	id := requestCtx.ResourceID
-	relativePath := middleware.GetRelativePath(p.Options().PathBase, requestCtx.OrignalURL.Path)
+	relativePath := middleware.GetRelativePath(p.Options().PathBase, requestCtx.OriginalURL.Path)
 
-	downstreamURL, err := resourcegroups.ValidateDownstream(ctx, p.StorageClient(), id)
+	apiVersion := requestCtx.APIVersion
+	if apiVersion == "" {
+		message := "the api-version query parameter is required"
+		response := v1.ErrorResponse{Error: &v1.ErrorDetails{Code: v1.CodeInvalid, Message: message, Target: id.String()}}
+		return armrpc_rest.NewBadRequestARMResponse(response), nil
+	}
+
+	downstreamURL, err := resourcegroups.ValidateDownstream(ctx, p.DatabaseClient(), id, v1.LocationGlobal, apiVersion)
 	if errors.Is(err, &resourcegroups.NotFoundError{}) {
-		return armrpc_rest.NewNotFoundResponse(id), nil
+		return armrpc_rest.NewNotFoundResponseWithCause(id, err.Error()), nil
 	} else if errors.Is(err, &resourcegroups.InvalidError{}) {
-		response := v1.ErrorResponse{Error: v1.ErrorDetails{Code: v1.CodeInvalid, Message: err.Error(), Target: id.String()}}
+		response := v1.ErrorResponse{Error: &v1.ErrorDetails{Code: v1.CodeInvalid, Message: err.Error(), Target: id.String()}}
 		return armrpc_rest.NewBadRequestARMResponse(response), nil
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to validate downstream: %w", err)
+	}
+
+	if downstreamURL == nil {
+		downstreamURL = p.defaultDownstream
+	}
+
+	if downstreamURL == nil {
+		message := "No downstream address was configured for the resource provider, and no default downstream address was provided"
+		response := v1.ErrorResponse{Error: &v1.ErrorDetails{Code: v1.CodeInvalid, Message: message, Target: id.String()}}
+		return armrpc_rest.NewInternalServerErrorARMResponse(response), nil
 	}
 
 	proxyReq, err := p.PrepareProxyRequest(ctx, req, downstreamURL.String(), relativePath)
@@ -116,7 +139,6 @@ func (p *ProxyController) Run(ctx context.Context, w http.ResponseWriter, req *h
 	}
 
 	interceptor := &responseInterceptor{Inner: p.transport}
-
 	sender := proxy.NewARMProxy(proxy.ReverseProxyOptions{RoundTripper: interceptor}, downstreamURL, nil)
 	sender.ServeHTTP(w, proxyReq)
 
@@ -192,6 +214,9 @@ func (p *ProxyController) PrepareProxyRequest(ctx context.Context, originalReq *
 	proxyReq.Header.Set("X-Forwarded-Proto", refererURL.Scheme)
 	proxyReq.Header.Set(v1.RefererHeader, refererURL.String())
 
+	// Clear route context, we don't want to inherit any state from Chi.
+	proxyReq = proxyReq.WithContext(context.WithValue(ctx, chi.RouteCtxKey, nil))
+
 	return proxyReq, nil
 }
 
@@ -220,8 +245,8 @@ func (p *ProxyController) IsTerminalResponse(resp *http.Response) bool {
 }
 
 // UpdateTrackedResource updates the tracked resource synchronously.
-func (p *ProxyController) UpdateTrackedResource(ctx context.Context, downstream string, id resources.ID, apiVersion string) error {
-	return p.updater.Update(ctx, downstream, id, apiVersion)
+func (p *ProxyController) UpdateTrackedResource(ctx context.Context, downstreamURL string, originalID resources.ID, apiVersion string) error {
+	return p.updater.Update(ctx, downstreamURL, originalID, apiVersion)
 }
 
 // EnqueueTrackedResourceUpdate enqueues an async operation to update the tracked resource.
@@ -254,8 +279,8 @@ func (p *ProxyController) EnqueueTrackedResourceUpdate(ctx context.Context, id r
 	queueOperation := false
 retry:
 	for retryCount := 1; retryCount <= EnqueueOperationRetryCount; retryCount++ {
-		obj, err := p.StorageClient().Get(ctx, trackingID.String())
-		if errors.Is(err, &store.ErrNotFound{}) {
+		obj, err := p.DatabaseClient().Get(ctx, trackingID.String())
+		if errors.Is(err, &database.ErrNotFound{}) {
 			// Safe to ignore. This means that the resource has not been tracked yet.
 		} else if err != nil {
 			return err
@@ -277,8 +302,8 @@ retry:
 		}
 
 		logger.V(ucplog.LevelDebug).Info("enqueuing tracked resource update")
-		err = p.StorageClient().Save(ctx, &store.Object{Metadata: store.Metadata{ID: trackingID.String()}, Data: entry}, store.WithETag(etag))
-		if errors.Is(err, &store.ErrConcurrency{}) {
+		err = p.DatabaseClient().Save(ctx, &database.Object{Metadata: database.Metadata{ID: trackingID.String()}, Data: entry}, database.WithETag(etag))
+		if errors.Is(err, &database.ErrConcurrency{}) {
 			// This means we hit a concurrency error saving the tracked resource entry. This means that the resource
 			// was updated in the background. We should retry.
 			logger.V(ucplog.LevelDebug).Info("enqueue tracked resource update failed due to concurrency error", "retryCount", retryCount)

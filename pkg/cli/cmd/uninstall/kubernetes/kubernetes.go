@@ -19,6 +19,8 @@ package kubernetes
 import (
 	"context"
 
+	"github.com/radius-project/radius/pkg/cli/kubernetes"
+
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/helm"
@@ -48,23 +50,27 @@ rad uninstall kubernetes --kubecontext my-kubecontext`,
 	}
 
 	commonflags.AddKubeContextFlagVar(cmd, &runner.KubeContext)
+	cmd.Flags().BoolVar(&runner.Purge, "purge", false, "Delete all data stored by Radius.")
 
 	return cmd, runner
 }
 
 // Runner is the Runner implementation for the `rad uninstall kubernetes` command.
 type Runner struct {
-	Helm   helm.Interface
-	Output output.Interface
+	Helm       helm.Interface
+	Output     output.Interface
+	Kubernetes kubernetes.Interface
 
 	KubeContext string
+	Purge       bool
 }
 
 // NewRunner creates an instance of the runner for the `rad uninstall kubernetes` command.
 func NewRunner(factory framework.Factory) *Runner {
 	return &Runner{
-		Helm:   factory.GetHelmInterface(),
-		Output: factory.GetOutput(),
+		Helm:       factory.GetHelmInterface(),
+		Output:     factory.GetOutput(),
+		Kubernetes: factory.GetKubernetesInterface(),
 	}
 }
 
@@ -86,17 +92,35 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !state.Installed {
+	if !state.RadiusInstalled {
 		r.Output.LogInfo("Radius is not installed on the Kubernetes cluster")
 		return nil
 	}
 
 	r.Output.LogInfo("Uninstalling Radius...")
-	err = r.Helm.UninstallRadius(ctx, r.KubeContext)
+	err = r.Helm.UninstallRadius(ctx, helm.ClusterOptions{
+		Radius: helm.ChartOptions{
+			Namespace:   helm.RadiusSystemNamespace,
+			ReleaseName: helm.NewDefaultClusterOptions().Radius.ReleaseName,
+		},
+		Dapr: helm.ChartOptions{
+			Namespace:   helm.DaprSystemNamespace,
+			ReleaseName: helm.NewDefaultClusterOptions().Dapr.ReleaseName,
+		},
+	}, r.KubeContext)
+
 	if err != nil {
 		return err
 	}
 
+	if r.Purge {
+		r.Output.LogInfo("Deleting namespace %s", helm.RadiusSystemNamespace)
+		if err := r.Kubernetes.DeleteNamespace(r.KubeContext); err != nil {
+			return err
+		}
+		r.Output.LogInfo("Radius was fully uninstalled. Any existing data have been removed.")
+		return nil
+	}
 	r.Output.LogInfo("Radius was uninstalled successfully. Any existing data will be retained for future installations. Local configuration is also retained. Use the `rad workspace` command if updates are needed to your configuration.")
 	return nil
 }

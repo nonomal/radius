@@ -30,6 +30,7 @@ import (
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/deploy"
+	"github.com/radius-project/radius/pkg/cli/filesystem"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
@@ -53,24 +54,24 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Short: "Deploy a template",
 		Long: `Deploy a Bicep or ARM template
 	
-	The deploy command compiles a Bicep or ARM template and deploys it to your default environment (unless otherwise specified).
-		
-	You can combine Radius types as as well as other types that are available in Bicep such as Azure resources. See
-	the Radius documentation for information about describing your application and resources with Bicep.
+The deploy command compiles a Bicep or ARM template and deploys it to your default environment (unless otherwise specified).
 	
-	You can specify parameters using the '--parameter' flag ('-p' for short). Parameters can be passed as:
-	
-	- A file containing multiple parameters using the ARM JSON parameter format (see below)
-	- A file containing a single value in JSON format
-	- A key-value-pair passed in the command line
-	
-	When passing multiple parameters in a single file, use the format described here:
-	
-		https://docs.microsoft.com/en-us/azure/azure-resource-manager/templates/parameter-files
-	
-	You can specify parameters using multiple sources. Parameters can be overridden based on the 
-	order the are provided. Parameters appearing later in the argument list will override those defined earlier.
-	`,
+You can combine Radius types as as well as other types that are available in Bicep such as Azure resources. See
+the Radius documentation for information about describing your application and resources with Bicep.
+
+You can specify parameters using the '--parameter' flag ('-p' for short). Parameters can be passed as:
+
+- A file containing multiple parameters using the ARM JSON parameter format (see below)
+- A file containing a single value in JSON format
+- A key-value-pair passed in the command line
+
+When passing multiple parameters in a single file, use the format described here:
+
+	https://docs.microsoft.com/en-us/azure/azure-resource-manager/templates/parameter-files
+
+You can specify parameters using multiple sources. Parameters can be overridden based on the 
+order they are provided. Parameters appearing later in the argument list will override those defined earlier.
+`,
 		Example: `
 # deploy a Bicep template
 rad deploy myapp.bicep
@@ -86,6 +87,10 @@ rad deploy myapp.bicep --environment production
 
 # deploy using a specific environment and resource group
 rad deploy myapp.bicep --environment production --group mygroup
+
+# deploy using an environment ID and a resource group. The application will be deployed in mygroup scope, using the specified environment.
+# use this option if the environment is in a different group.
+rad deploy myapp.bicep --environment /planes/radius/local/resourcegroups/prod/providers/Applications.Core/environments/prod --group mygroup
 
 # specify a string parameter
 rad deploy myapp.bicep --parameters version=latest
@@ -123,12 +128,12 @@ type Runner struct {
 	Deploy            deploy.Interface
 	Output            output.Interface
 
-	ApplicationName string
-	EnvironmentName string
-	FilePath        string
-	Parameters      map[string]map[string]any
-	Workspace       *workspaces.Workspace
-	Providers       *clients.Providers
+	ApplicationName     string
+	EnvironmentNameOrID string
+	FilePath            string
+	Parameters          map[string]map[string]any
+	Workspace           *workspaces.Workspace
+	Providers           *clients.Providers
 }
 
 // NewRunner creates a new instance of the `rad deploy` runner.
@@ -166,7 +171,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	// does not exist.
 	workspace.Scope = scope
 
-	r.EnvironmentName, err = cli.RequireEnvironmentName(cmd, args, *workspace)
+	r.EnvironmentNameOrID, err = cli.RequireEnvironmentNameOrID(cmd, args, *workspace)
 	if err != nil {
 		return err
 	}
@@ -183,17 +188,17 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	env, err := client.GetEnvDetails(cmd.Context(), r.EnvironmentName)
+	env, err := client.GetEnvironment(cmd.Context(), r.EnvironmentNameOrID)
 	if err != nil {
 		// If the error is not a 404, return it
 		if !clients.Is404Error(err) {
 			return err
 		}
 
-		// If the environment doesn't exist, but the user specified it as
+		// If the environment doesn't exist, but the user specified its name or resource id as
 		// a command-line option, return an error
 		if cli.DidSpecifyEnvironmentName(cmd, args) {
-			return clierrors.Message("The environment %q does not exist in scope %q. Run `rad env create` first.", r.EnvironmentName, r.Workspace.Scope)
+			return clierrors.Message("The environment %q does not exist in scope %q. Run `rad env create` first. You could also provide the environment ID if the environment exists in a different group.", r.EnvironmentNameOrID, r.Workspace.Scope)
 		}
 
 		// If we got here, it means that the error was a 404 and the user did not specify the environment name.
@@ -202,8 +207,10 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	r.Providers = &clients.Providers{}
 	r.Providers.Radius = &clients.RadiusProvider{}
-	r.Providers.Radius.EnvironmentID = r.Workspace.Scope + "/providers/applications.core/environments/" + r.EnvironmentName
-	r.Workspace.Environment = r.Providers.Radius.EnvironmentID
+	if env.ID != nil {
+		r.Providers.Radius.EnvironmentID = *env.ID
+		r.Workspace.Environment = r.Providers.Radius.EnvironmentID
+	}
 
 	if r.ApplicationName != "" {
 		r.Providers.Radius.ApplicationID = r.Workspace.Scope + "/providers/applications.core/applications/" + r.ApplicationName
@@ -229,7 +236,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	parser := bicep.ParameterParser{FileSystem: bicep.OSFileSystem{}}
+	parser := bicep.ParameterParser{FileSystem: filesystem.NewOSFS()}
 	r.Parameters, err = parser.Parse(parameterArgs...)
 	if err != nil {
 		return err
@@ -272,7 +279,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		// Validate that the environment exists already
-		_, err = client.GetEnvDetails(ctx, r.EnvironmentName)
+		_, err = client.GetEnvironment(ctx, r.EnvironmentNameOrID)
 		if err != nil {
 			// If the error is not a 404, return it
 			if !clients.Is404Error(err) {
@@ -282,7 +289,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			// If the error is a 404, it means that the environment does not exist,
 			// but this is okay. We don't want to create an application though.
 		} else {
-			err = client.CreateApplicationIfNotFound(ctx, r.ApplicationName, v20231001preview.ApplicationResource{
+			err = client.CreateApplicationIfNotFound(ctx, r.ApplicationName, &v20231001preview.ApplicationResource{
 				Location: to.Ptr(v1.LocationGlobal),
 				Properties: &v20231001preview.ApplicationProperties{
 					Environment: &r.Workspace.Environment,
@@ -298,11 +305,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.ApplicationName == "" {
 		progressText = fmt.Sprintf(
 			"Deploying template '%v' into environment '%v' from workspace '%v'...\n\n"+
-				"Deployment In Progress...", r.FilePath, r.EnvironmentName, r.Workspace.Name)
+				"Deployment In Progress...", r.FilePath, r.EnvironmentNameOrID, r.Workspace.Name)
 	} else {
 		progressText = fmt.Sprintf(
 			"Deploying template '%v' for application '%v' and environment '%v' from workspace '%v'...\n\n"+
-				"Deployment In Progress... ", r.FilePath, r.ApplicationName, r.EnvironmentName, r.Workspace.Name)
+				"Deployment In Progress... ", r.FilePath, r.ApplicationName, r.EnvironmentNameOrID, r.Workspace.Name)
 	}
 
 	_, err = r.Deploy.DeployWithProgress(ctx, deploy.Options{

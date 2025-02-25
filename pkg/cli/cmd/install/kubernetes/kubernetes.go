@@ -41,9 +41,9 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Long: `Install Radius in a Kubernetes cluster using the Radius Helm chart.
 By default 'rad install kubernetes' will install Radius with the version matching the rad CLI version.
 
-Radius will be installed in the 'radius-system' namespace. For more information visit https://docs.radapp.io/concepts/architecture/
+Radius will be installed in the 'radius-system' namespace. For more information visit https://docs.radapp.io/concepts/technical/architecture/
 
-Overrides can be set by specifying Helm chart values with the '--set' flag. For more information visit https://docs.radapp.io/operations/platforms/kubernetes/install/.
+Overrides can be set by specifying Helm chart values with the '--set' flag. For more information visit https://docs.radapp.io/guides/operations/kubernetes/install/.
 `,
 		Example: `# Install Radius with default settings in current Kubernetes context
 rad install kubernetes
@@ -56,6 +56,18 @@ rad install kubernetes --set key=value
 
 # Install Radius with the intermediate root CA certificate in the current Kubernetes context
 rad install kubernetes --set-file global.rootCA.cert=/path/to/rootCA.crt
+
+# Install Radius with zipkin server for distributed tracing 
+rad install kubernetes --set global.zipkin.url=http://localhost:9411/api/v2/spans
+
+# Install Radius with central prometheus monitoring service
+rad install kubernetes --set global.prometheus.path=/customdomain.com/metrics,global.prometheus.port=443,global.rootCA.cert=/path/to/rootCA.crt 
+
+# Install Radius using a helmchart from specified file path
+rad install kubernetes --chart /root/radius/deploy/Chart
+
+# Force re-install Radius with latest version
+rad install kubernetes --reinstall
 `,
 		Args: cobra.ExactArgs(0),
 		RunE: framework.RunCommand(runner),
@@ -107,7 +119,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // to the cli version. It then returns any errors that occur during the installation.
 func (r *Runner) Run(ctx context.Context) error {
 	cliOptions := helm.CLIClusterOptions{
-		Radius: helm.RadiusOptions{
+		Radius: helm.ChartOptions{
 			Reinstall:   r.Reinstall,
 			ChartPath:   r.Chart,
 			SetArgs:     r.Set,
@@ -120,13 +132,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	if state.Installed && !r.Reinstall {
+	if state.RadiusInstalled && !r.Reinstall {
 		r.Output.LogInfo("Found existing Radius installation. Use '--reinstall' to force reinstallation.")
 		return nil
 	}
 
 	version := version.Version()
-	if state.Installed {
+	if state.RadiusInstalled {
 		r.Output.LogInfo("Reinstalling Radius version %s to namespace: %s...", version, helm.RadiusSystemNamespace)
 	} else {
 		r.Output.LogInfo("Installing Radius version %s to namespace: %s...", version, helm.RadiusSystemNamespace)

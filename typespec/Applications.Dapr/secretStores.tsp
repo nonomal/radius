@@ -36,7 +36,8 @@ using OpenAPI;
 namespace Applications.Dapr;
 
 @doc("Dapr SecretStore portable resource")
-model DaprSecretStoreResource is TrackedResourceRequired<DaprSecretStoreProperties, "secretStores"> {
+model DaprSecretStoreResource
+  is TrackedResourceRequired<DaprSecretStoreProperties, "secretStores"> {
   @doc("SecretStore name")
   @key("secretStoreName")
   @path
@@ -44,10 +45,15 @@ model DaprSecretStoreResource is TrackedResourceRequired<DaprSecretStoreProperti
   name: ResourceNameString;
 }
 
+// This is to prevent a secret store from referencing another secret store
+// This would be valid according to Dapr component specs, but may confuse users
+@withoutOmittedProperties("auth")
+model NonRedundantDaprResourceProperties is DaprResourceProperties;
+
 @doc("Dapr SecretStore portable resource properties")
 model DaprSecretStoreProperties {
   ...EnvironmentScopedResource;
-  ...DaprResourceProperties;
+  ...NonRedundantDaprResourceProperties;
   ...RecipeBaseProperties;
 }
 
@@ -69,7 +75,7 @@ interface SecretStores {
     UCPBaseParameters<DaprSecretStoreResource>
   >;
 
-  delete is ArmResourceDeleteAsync<
+  delete is ArmResourceDeleteWithoutOkAsync<
     DaprSecretStoreResource,
     UCPBaseParameters<DaprSecretStoreResource>
   >;

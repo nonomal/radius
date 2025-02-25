@@ -23,6 +23,7 @@ vendor/
 # Radius scaffolding
 app.bicep
 .rad/
+bicepconfig.json
 
 # Build Output
 bin/
@@ -65,3 +66,6 @@ tmp-*
 
 # Auto-generated Bicep markdown files
 hack/bicep-types-radius/generated/**/*.md
+
+# Bicep extensions
+*.tgz

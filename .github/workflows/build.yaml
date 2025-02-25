@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-#    
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
@@ -31,12 +31,12 @@ on:
       - release/*
 
 permissions:
-  id-token: write      # Required for requesting the JWT
-  contents: write      # Required for creating releases
-  issues: write        # Required for creating comments
-  checks: write        # Required for updating check runs
+  id-token: write # Required for requesting the JWT
+  contents: write # Required for creating releases
+  issues: write # Required for creating comments
+  checks: write # Required for updating check runs
   pull-requests: write # Required for updating pull requests
-  packages: write      # Required for uploading the package
+  packages: write # Required for uploading the package
 
 concurrency:
   # Cancel the previously triggered build for only PR build.
@@ -45,8 +45,8 @@ concurrency:
 
 env:
   # Go version to install
-  GOVER: '1.22.2'
-  
+  GOVER: "1.22.2"
+
   # gotestsum version - see: https://github.com/gotestyourself/gotestsum
   GOTESTSUMVERSION: 1.10.0
 
@@ -54,7 +54,7 @@ env:
   GHCR_ACTOR: rad-ci-bot
 
   # Container registry url for GitHub container registry.
-  CONTAINER_REGISTRY: 'ghcr.io/radius-project'
+  CONTAINER_REGISTRY: "ghcr.io/radius-project"
 
   # Local file path to the release binaries.
   RELEASE_PATH: ./release
@@ -64,6 +64,9 @@ env:
 
   # URL to get source code for building the image
   IMAGE_SRC: https://github.com/radius-project/radius
+
+  # bicep-types ACR url for uploading Radius Bicep types
+  BICEP_TYPES_REGISTRY: 'biceptypes.azurecr.io'
 
 jobs:
   build-and-push-cli:
@@ -98,6 +101,7 @@ jobs:
         with:
           go-version: ${{ env.GOVER }}
           cache-dependency-path: go.sum
+          cache: true
       - name: Parse release version and set environment variables
         run: python ./.github/scripts/get_release_version.py
       - name: Make build
@@ -105,15 +109,15 @@ jobs:
       - name: Run make test (unit tests)
         if: matrix.target_arch == 'amd64' && matrix.target_os == 'linux'
         env:
-          GOTESTSUM_OPTS: '--junitfile ./dist/unit_test/results.xml'
-          GOTEST_OPTS: '-race -coverprofile ./dist/unit_test/ut_coverage.out'
+          GOTESTSUM_OPTS: "--junitfile ./dist/unit_test/results.xml"
+          GOTEST_OPTS: "-race -coverprofile ./dist/unit_test/ut_coverage.out"
         run: |
           mkdir -p ./dist/unit_test
           go install gotest.tools/gotestsum@v${{ env.GOTESTSUMVERSION }}
           make test
       - name: Upload coverage to Codecov
         if: matrix.target_arch == 'amd64' && matrix.target_os == 'linux'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           codecov_yml_path: ./.codecov.yml
@@ -125,9 +129,9 @@ jobs:
         # Always is required here to make sure this target runs even when tests fail.
         if: always() && matrix.target_arch == 'amd64' && matrix.target_os == 'linux'
         with:
-          test_group_name: 'Unit Tests'
-          artifact_name: 'unit_test_results'
-          result_directory: 'dist/unit_test/'
+          test_group_name: "Unit Tests"
+          artifact_name: "unit_test_results"
+          result_directory: "dist/unit_test/"
       - name: Copy cli binaries to release (unix-like)
         if: matrix.target_os != 'windows'
         run: |
@@ -176,6 +180,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GOVER }}
+          cache: true
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -190,7 +195,6 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
       - name: Push container images (latest)
         run: |
-          make docker-test-image-build && make docker-test-image-push
           make docker-multi-arch-push
         if: (github.ref == 'refs/heads/main') # push image to latest on merge to main
         env:
@@ -198,7 +202,6 @@ jobs:
           DOCKER_TAG_VERSION: latest
       - name: Build container images (PR) # Don't push on PR, agent will not have permission.
         run: |
-          make docker-test-image-build
           make docker-multi-arch-build
         if: github.event_name == 'pull_request'
         env:
@@ -206,7 +209,6 @@ jobs:
           DOCKER_TAG_VERSION: ${{ env.REL_VERSION }} # includes PR number
       - name: Push container images (release)
         run: |
-          make docker-test-image-build && make docker-test-image-push
           make docker-multi-arch-push
         if: startsWith(github.ref, 'refs/tags/v') # push image on tag
         env:
@@ -215,7 +217,7 @@ jobs:
 
   build-and-push-helm-chart:
     name: Helm chart build
-    needs: ['build-and-push-images']
+    needs: ["build-and-push-images"]
     runs-on: ubuntu-latest
     # Don't push on PR, agent will not have permission.
     if: github.repository == 'radius-project/radius' && ((startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'))
@@ -226,14 +228,14 @@ jobs:
       OCI_REGISTRY: ghcr.io
       # We only push the chart on pushes to main or to a tag. The versioning logic will select the right
       # version for us.
-      OCI_REPOSITORY: 'radius-project/helm-chart' 
+      OCI_REPOSITORY: "radius-project/helm-chart"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install helm
         uses: azure/setup-helm@v4
         with:
-          version: 'v3.11.1'
+          version: "v3.11.1"
       - name: Parse release version and set environment variables
         run: python ./.github/scripts/get_release_version.py
       - name: Run Helm linter
@@ -253,18 +255,60 @@ jobs:
             --username ${{ secrets.AZURE_SP_TESTS_APPID }} \
             --password ${{ secrets.AZURE_SP_TESTS_PASSWORD }} \
             --tenant ${{ secrets.AZURE_SP_TESTS_TENANTID }}
-      # TODO: Delete this step once we use GHCR as the helm chart repo.
-      - name: Push helm chart to ACR
-        run: |
-          az acr helm push --name radius ${{ env.ARTIFACT_DIR }}/${{ env.HELM_PACKAGE_DIR }}/radius-${{ env.CHART_VERSION }}.tgz --force
       - name: Push helm chart to GHCR
         run: |
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} --password-stdin ${{ env.OCI_REGISTRY }}
           helm push ${{ env.ARTIFACT_DIR }}/${{ env.HELM_PACKAGE_DIR }}/radius-${{ env.CHART_VERSION }}.tgz oci://${{ env.OCI_REGISTRY }}/${{ env.OCI_REPOSITORY }}
 
+  build-and-push-bicep-types:
+    name: Publish Radius bicep types to ACR
+    runs-on: ubuntu-latest
+    environment: publish-bicep
+    steps: 
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Parse release version and set environment variables
+        run: python ./.github/scripts/get_release_version.py
+      - name: Set up Go ${{ env.GOVER }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GOVER }}
+          cache: true
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Generate Bicep extensibility types from OpenAPI specs
+        run: |
+          make generate-bicep-types VERSION=${{ env.REL_CHANNEL == 'edge' && 'latest' || env.REL_CHANNEL }}
+      - name: Upload Radius Bicep types artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: radius-bicep-types
+          path: ./hack/bicep-types-radius/generated
+          if-no-files-found: error
+      - name: 'Login via Azure CLI'
+        if: github.repository == 'radius-project/radius' && ((startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'))
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.BICEPTYPES_CLIENT_ID }}
+          tenant-id: ${{ secrets.BICEPTYPES_TENANT_ID }}
+          subscription-id: ${{ secrets.BICEPTYPES_SUBSCRIPTION_ID }}
+      - name: Setup and verify bicep CLI
+        if: github.repository == 'radius-project/radius' && ((startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'))
+        run: |
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x ./bicep
+          sudo mv ./bicep /usr/local/bin/bicep
+          bicep --version
+      - name: Publish bicep types 
+        if: github.repository == 'radius-project/radius' && ((startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'))
+        run: |
+          bicep publish-extension ./hack/bicep-types-radius/generated/index.json --target br:${{ env.BICEP_TYPES_REGISTRY }}/radius:${{ env.REL_CHANNEL == 'edge' && 'latest' || env.REL_CHANNEL }} --force
+
   publish-release:
     name: Publish GitHub Release
-    needs: ['build-and-push-cli']
+    needs: ["build-and-push-cli"]
     runs-on: ubuntu-latest
     if: github.repository == 'radius-project/radius' && startsWith(github.ref, 'refs/tags/v')
     env:

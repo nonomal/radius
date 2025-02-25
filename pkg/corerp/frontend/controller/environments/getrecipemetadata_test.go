@@ -27,10 +27,10 @@ import (
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	ctrl "github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	"github.com/radius-project/radius/pkg/armrpc/rpctest"
+	"github.com/radius-project/radius/pkg/components/database"
 	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/engine"
-	"github.com/radius-project/radius/pkg/ucp/store"
 	"github.com/radius-project/radius/test/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -39,7 +39,7 @@ import (
 func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 	mctrl := gomock.NewController(t)
 	defer mctrl.Finish()
-	mStorageClient := store.NewMockStorageClient(mctrl)
+	databaseClient := database.NewMockClient(mctrl)
 	mEngine := engine.NewMockEngine(mctrl)
 	ctx := context.Background()
 	t.Parallel()
@@ -49,12 +49,12 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 		req, err := rpctest.NewHTTPRequestFromJSON(ctx, v1.OperationPost.HTTPMethod(), testHeaderfilegetrecipemetadata, envInput)
 		require.NoError(t, err)
 
-		mStorageClient.
+		databaseClient.
 			EXPECT().
 			Get(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, id string, _ ...store.GetOptions) (*store.Object, error) {
-				return &store.Object{
-					Metadata: store.Metadata{ID: id, ETag: "etag"},
+			DoAndReturn(func(ctx context.Context, id string, _ ...database.GetOptions) (*database.Object, error) {
+				return &database.Object{
+					Metadata: database.Metadata{ID: id, ETag: "etag"},
 					Data:     envDataModel,
 				}, nil
 			})
@@ -74,10 +74,17 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 				"mongodbName":    map[string]any{"type": "string"},
 			},
 		}
-		mEngine.EXPECT().GetRecipeMetadata(ctx, recipeDefinition).Return(recipeData, nil)
+		mEngine.EXPECT().GetRecipeMetadata(ctx, engine.GetRecipeMetadataOptions{
+			BaseOptions: engine.BaseOptions{
+				Recipe: recipes.ResourceMetadata{
+					EnvironmentID: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/radius-test-rg/providers/applications.core/environments/env0",
+				},
+			},
+			RecipeDefinition: recipeDefinition,
+		}).Return(recipeData, nil)
 
 		opts := ctrl.Options{
-			StorageClient: mStorageClient,
+			DatabaseClient: databaseClient,
 		}
 		ctl, err := NewGetRecipeMetadata(opts, mEngine)
 		require.NoError(t, err)
@@ -97,12 +104,12 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 		req, err := rpctest.NewHTTPRequestFromJSON(ctx, v1.OperationPost.HTTPMethod(), testHeaderfilegetrecipemetadata, envInput)
 		require.NoError(t, err)
 
-		mStorageClient.
+		databaseClient.
 			EXPECT().
 			Get(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, id string, _ ...store.GetOptions) (*store.Object, error) {
-				return &store.Object{
-					Metadata: store.Metadata{ID: id, ETag: "etag"},
+			DoAndReturn(func(ctx context.Context, id string, _ ...database.GetOptions) (*database.Object, error) {
+				return &database.Object{
+					Metadata: database.Metadata{ID: id, ETag: "etag"},
 					Data:     envDataModel,
 				}, nil
 			})
@@ -122,10 +129,17 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 				"mongodbName":    map[string]any{"type": "string"},
 			},
 		}
-		mEngine.EXPECT().GetRecipeMetadata(ctx, recipeDefinition).Return(recipeData, nil)
+		mEngine.EXPECT().GetRecipeMetadata(ctx, engine.GetRecipeMetadataOptions{
+			BaseOptions: engine.BaseOptions{
+				Recipe: recipes.ResourceMetadata{
+					EnvironmentID: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/radius-test-rg/providers/applications.core/environments/env0",
+				},
+			},
+			RecipeDefinition: recipeDefinition,
+		}).Return(recipeData, nil)
 
 		opts := ctrl.Options{
-			StorageClient: mStorageClient,
+			DatabaseClient: databaseClient,
 		}
 		ctl, err := NewGetRecipeMetadata(opts, mEngine)
 		require.NoError(t, err)
@@ -145,14 +159,14 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 		require.NoError(t, err)
 		ctx := rpctest.NewARMRequestContext(req)
 
-		mStorageClient.
+		databaseClient.
 			EXPECT().
 			Get(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, id string, _ ...store.GetOptions) (*store.Object, error) {
-				return nil, &store.ErrNotFound{ID: id}
+			DoAndReturn(func(ctx context.Context, id string, _ ...database.GetOptions) (*database.Object, error) {
+				return nil, &database.ErrNotFound{ID: id}
 			})
 		opts := ctrl.Options{
-			StorageClient: mStorageClient,
+			DatabaseClient: databaseClient,
 		}
 		ctl, err := NewGetRecipeMetadata(opts, mEngine)
 		require.NoError(t, err)
@@ -182,18 +196,18 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 		require.NoError(t, err)
 		ctx := rpctest.NewARMRequestContext(req)
 
-		mStorageClient.
+		databaseClient.
 			EXPECT().
 			Get(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, id string, _ ...store.GetOptions) (*store.Object, error) {
-				return &store.Object{
-					Metadata: store.Metadata{ID: id, ETag: "etag"},
+			DoAndReturn(func(ctx context.Context, id string, _ ...database.GetOptions) (*database.Object, error) {
+				return &database.Object{
+					Metadata: database.Metadata{ID: id, ETag: "etag"},
 					Data:     envDataModel,
 				}, nil
 			})
 
 		opts := ctrl.Options{
-			StorageClient: mStorageClient,
+			DatabaseClient: databaseClient,
 		}
 		ctl, err := NewGetRecipeMetadata(opts, mEngine)
 		require.NoError(t, err)
@@ -221,12 +235,12 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 		req, err := rpctest.NewHTTPRequestFromJSON(ctx, v1.OperationPost.HTTPMethod(), testHeaderfilegetrecipemetadata, envInput)
 		require.NoError(t, err)
 
-		mStorageClient.
+		databaseClient.
 			EXPECT().
 			Get(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, id string, _ ...store.GetOptions) (*store.Object, error) {
-				return &store.Object{
-					Metadata: store.Metadata{ID: id, ETag: "etag"},
+			DoAndReturn(func(ctx context.Context, id string, _ ...database.GetOptions) (*database.Object, error) {
+				return &database.Object{
+					Metadata: database.Metadata{ID: id, ETag: "etag"},
 					Data:     envDataModel,
 				}, nil
 			})
@@ -240,10 +254,17 @@ func TestGetRecipeMetadataRun_20231001Preview(t *testing.T) {
 			ResourceType:    *envInput.ResourceType,
 		}
 		engineErr := fmt.Errorf("could not find driver %s", "invalidDriver")
-		mEngine.EXPECT().GetRecipeMetadata(ctx, recipeDefinition).Return(nil, engineErr)
+		mEngine.EXPECT().GetRecipeMetadata(ctx, engine.GetRecipeMetadataOptions{
+			BaseOptions: engine.BaseOptions{
+				Recipe: recipes.ResourceMetadata{
+					EnvironmentID: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/radius-test-rg/providers/applications.core/environments/env0",
+				},
+			},
+			RecipeDefinition: recipeDefinition,
+		}).Return(nil, engineErr)
 
 		opts := ctrl.Options{
-			StorageClient: mStorageClient,
+			DatabaseClient: databaseClient,
 		}
 		ctl, err := NewGetRecipeMetadata(opts, mEngine)
 		require.NoError(t, err)

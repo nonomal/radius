@@ -44,7 +44,7 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Short: "Delete a resource group",
 		Long: `Delete a resource group. 
 		
-		Delete a resource group if it is empty. If not empty, delete the contents and try again`,
+Delete a resource group if it is empty. If not empty, delete the contents and try again`,
 		Example: `rad group delete rgprod`,
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    framework.RunCommand(runner),
@@ -135,7 +135,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	deleted, err := client.DeleteUCPGroup(ctx, "local", r.UCPResourceGroupName)
+	deleted, err := client.DeleteResourceGroup(ctx, "local", r.UCPResourceGroupName)
 	if err != nil {
 		return err
 	}

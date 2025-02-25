@@ -1,4 +1,4 @@
-import radius as radius
+extension radius
 
 @description('Specifies the location for resources.')
 param location string = 'eastus'
@@ -53,7 +53,9 @@ resource container 'Applications.Core/containers@2023-10-01-preview' = {
     container: {
       image: magpieimage
       env: {
-        CONNECTION_STORAGE_ACCOUNTNAME: storageAccount.name
+        CONNECTION_STORAGE_ACCOUNTNAME: {
+          value: storageAccount.name
+        }
       }
       readinessProbe:{
         kind:'httpGet'

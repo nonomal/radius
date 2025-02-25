@@ -21,6 +21,17 @@ global:
   #   url: "http://jaeger-collector.radius-monitoring.svc.cluster.local:9411/api/v2/spans"
   #
 
+  # Configure global.azureWorkloadIdentity.enabled=true to enable Azure Workload Identity.
+  # Disabled by default.
+  azureWorkloadIdentity:
+    enabled: false
+
+  # Configure global.aws.irsa.enabled=true to enable AWS IRSA.
+  # Disabled by default.
+  aws:
+    irsa:
+      enabled: false
+
 controller:
   image: ghcr.io/radius-project/controller
   # Default tag uses Chart AppVersion.
@@ -53,6 +64,24 @@ ucp:
     limits:
       memory: "300Mi"
 
+dynamicrp:
+  image: ghcr.io/radius-project/dynamic-rp
+  # Default tag uses Chart AppVersion.
+  # tag: latest
+  resources:
+    requests:
+      # request memory is the average memory usage + 10% buffer.
+      memory: "160Mi"
+    limits:
+      # limit is higher for dynamic-rp because the Terraform execution
+      # can spike memory usage.
+      memory: "500Mi"
+  bicep:
+    deleteRetryCount: 20
+    deleteRetryDelaySeconds: 60
+  terraform:
+    path: "/terraform"
+
 rp:
   image: ghcr.io/radius-project/applications-rp
   # Default tag uses Chart AppVersion.
@@ -83,3 +112,18 @@ dashboard:
       memory: "60Mi"
     limits:
       memory: "300Mi"
+
+database:
+  postgres_user: "radius"
+  image: ghcr.io/radius-project/mirror/postgres
+  tag: latest
+  storageClassName: "" # set to the storage class name if required, the empty string will pickup the default storage class.
+  # Minimum resource requirements, may need to revisit and scale.
+  storageSize: "1Gi"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1024Mi"

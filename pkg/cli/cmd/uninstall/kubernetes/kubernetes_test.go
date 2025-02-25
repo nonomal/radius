@@ -20,6 +20,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/radius-project/radius/pkg/cli/kubernetes"
+
 	"github.com/radius-project/radius/pkg/cli/helm"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/test/radcli"
@@ -67,10 +69,19 @@ func Test_Run(t *testing.T) {
 		}
 
 		helmMock.EXPECT().CheckRadiusInstall("test-context").
-			Return(helm.InstallState{Installed: true, Version: "test-version"}, nil).
+			Return(helm.InstallState{RadiusInstalled: true, RadiusVersion: "test-version", DaprInstalled: true, DaprVersion: "test-version"}, nil).
 			Times(1)
 
-		helmMock.EXPECT().UninstallRadius(ctx, "test-context").
+		helmMock.EXPECT().UninstallRadius(ctx, helm.ClusterOptions{
+			Radius: helm.ChartOptions{
+				Namespace:   "radius-system",
+				ReleaseName: "radius",
+			},
+			Dapr: helm.ChartOptions{
+				Namespace:   "dapr-system",
+				ReleaseName: "dapr",
+			},
+		}, "test-context").
 			Return(nil).
 			Times(1)
 
@@ -111,6 +122,58 @@ func Test_Run(t *testing.T) {
 		expectedWrites := []any{
 			output.LogOutput{
 				Format: "Radius is not installed on the Kubernetes cluster",
+			},
+		}
+		require.Equal(t, expectedWrites, outputMock.Writes)
+	})
+	t.Run("Success: Installed -> Uninstalled -> Purge", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		helmMock := helm.NewMockInterface(ctrl)
+		outputMock := &output.MockOutput{}
+		k8sMock := kubernetes.NewMockInterface(ctrl)
+
+		ctx := context.Background()
+		runner := &Runner{
+			Helm:       helmMock,
+			Output:     outputMock,
+			Kubernetes: k8sMock,
+
+			KubeContext: "test-context",
+			Purge:       true,
+		}
+
+		helmMock.EXPECT().CheckRadiusInstall("test-context").
+			Return(helm.InstallState{RadiusInstalled: true, RadiusVersion: "test-version", DaprInstalled: true, DaprVersion: "test-version"}, nil).
+			Times(1)
+
+		helmMock.EXPECT().UninstallRadius(ctx, helm.ClusterOptions{
+			Radius: helm.ChartOptions{
+				Namespace:   "radius-system",
+				ReleaseName: "radius",
+			},
+			Dapr: helm.ChartOptions{
+				Namespace:   "dapr-system",
+				ReleaseName: "dapr",
+			},
+		}, "test-context").
+			Return(nil).
+			Times(1)
+
+		k8sMock.EXPECT().DeleteNamespace("test-context").Return(nil).Times(1)
+
+		err := runner.Run(ctx)
+		require.NoError(t, err)
+
+		expectedWrites := []any{
+			output.LogOutput{
+				Format: "Uninstalling Radius...",
+			},
+			output.LogOutput{
+				Format: "Deleting namespace %s",
+				Params: []any{helm.RadiusSystemNamespace},
+			},
+			output.LogOutput{
+				Format: "Radius was fully uninstalled. Any existing data have been removed.",
 			},
 		}
 		require.Equal(t, expectedWrites, outputMock.Writes)

@@ -38,7 +38,8 @@ using OpenAPI;
 
 namespace Applications.Core;
 
-model ContainerResource is TrackedResourceRequired<ContainerProperties, "containers">{
+model ContainerResource
+  is TrackedResourceRequired<ContainerProperties, "containers"> {
   @doc("Container name")
   @path
   @key("containerName")
@@ -224,7 +225,7 @@ model ConnectionProperties {
   source: string;
 
   @doc("default environment variable override")
-  disableDefaultEnvVars?: boolean = false;
+  disableDefaultEnvVars?: boolean;
 
   @doc("iam properties")
   iam?: IamProperties;
@@ -239,7 +240,7 @@ model Container {
   imagePullPolicy?: ImagePullPolicy;
 
   @doc("environment")
-  env?: Record<string>;
+  env?: Record<EnvironmentVariable>;
 
   @doc("container ports")
   ports?: Record<ContainerPortProperties>;
@@ -261,6 +262,21 @@ model Container {
 
   @doc("Working directory for the container")
   workingDir?: string;
+}
+
+@doc("Environment variables type")
+model EnvironmentVariable {
+  @doc("The value of the environment variable")
+  value?: string;
+
+  @doc("The reference to the variable")
+  valueFrom?: EnvironmentVariableReference;
+}
+
+@doc("The reference to the variable")
+model EnvironmentVariableReference {
+  @doc("The secret reference")
+  secretRef: SecretReference;
 }
 
 @doc("The image pull policy for the container")
@@ -306,6 +322,10 @@ enum VolumePermission {
 enum IAMKind {
   @doc("Azure Active Directory")
   azure,
+
+  // This was added because typespec doesn't generate necessary functions and other variables for single value enums.
+  // This can be deleted if we add more values to the enum.
+  string,
 }
 
 @armResourceOperations
@@ -326,7 +346,7 @@ interface Containers {
     UCPBaseParameters<ContainerResource>
   >;
 
-  delete is ArmResourceDeleteAsync<
+  delete is ArmResourceDeleteWithoutOkAsync<
     ContainerResource,
     UCPBaseParameters<ContainerResource>
   >;

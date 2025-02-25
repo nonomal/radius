@@ -72,7 +72,7 @@ func NewOKResponseWithHeaders(body any, headers map[string]string) Response {
 // code of 200. If an error occurs while marshaling the body or writing the response, an error is returned.
 func (r *OKResponse) Apply(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
-	logger.Info(fmt.Sprintf("responding with status code: %d", http.StatusOK), logging.LogHTTPStatusCode, http.StatusOK)
+	logger.V(ucplog.LevelDebug).Info(fmt.Sprintf("responding with status code: %d", http.StatusOK), logging.LogHTTPStatusCode, http.StatusOK)
 
 	bytes, err := json.MarshalIndent(r.Body, "", "  ")
 	if err != nil {
@@ -114,7 +114,7 @@ func NewCreatedResponse(body any) Response {
 // 201 Created response code and returns an error if any of these steps fail.
 func (r *CreatedResponse) Apply(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
-	logger.Info(fmt.Sprintf("responding with status code: %d", http.StatusCreated), logging.LogHTTPStatusCode, http.StatusCreated)
+	logger.V(ucplog.LevelDebug).Info(fmt.Sprintf("responding with status code: %d", http.StatusCreated), logging.LogHTTPStatusCode, http.StatusCreated)
 
 	bytes, err := json.MarshalIndent(r.Body, "", "  ")
 	if err != nil {
@@ -148,7 +148,7 @@ func NewCreatedAsyncResponse(body any, location string, scheme string) Response 
 // Apply renders Created HTTP Response into http.ResponseWriter with Location header for asynchronous operation and returns an error if it fails.
 func (r *CreatedAsyncResponse) Apply(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
-	logger.Info(fmt.Sprintf("responding with status code: %d", http.StatusCreated), logging.LogHTTPStatusCode, http.StatusCreated)
+	logger.V(ucplog.LevelDebug).Info(fmt.Sprintf("responding with status code: %d", http.StatusCreated), logging.LogHTTPStatusCode, http.StatusCreated)
 
 	bytes, err := json.MarshalIndent(r.Body, "", "  ")
 	if err != nil {
@@ -199,7 +199,7 @@ func NewAcceptedAsyncResponse(body any, location string, scheme string) Response
 // Apply renders Accepted HTTP Response into http.ResponseWriter with Location header for asynchronous operation and returns an error if it fails.
 func (r *AcceptedAsyncResponse) Apply(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
-	logger.Info(fmt.Sprintf("responding with status code: %d", http.StatusAccepted), logging.LogHTTPStatusCode, http.StatusAccepted)
+	logger.V(ucplog.LevelDebug).Info(fmt.Sprintf("responding with status code: %d", http.StatusAccepted), logging.LogHTTPStatusCode, http.StatusAccepted)
 
 	bytes, err := json.MarshalIndent(r.Body, "", "  ")
 	if err != nil {
@@ -398,7 +398,7 @@ func NewLinkedResourceUpdateErrorResponse(resourceID resources.ID, oldProp *rpv1
 	message := fmt.Sprintf(LinkedResourceUpdateErrorFormat, resourceID.Name(), resourceID.Name(), newAppEnv, oldProp.Application, oldProp.Environment, resourceID.Name())
 	return &BadRequestResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeInvalid,
 				Message: message,
 				Target:  resourceID.String(),
@@ -411,7 +411,7 @@ func NewLinkedResourceUpdateErrorResponse(resourceID resources.ID, oldProp *rpv1
 func NewDependencyMissingResponse(message string) Response {
 	return &BadRequestResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeDependencyMissing,
 				Message: message,
 			},
@@ -423,7 +423,7 @@ func NewDependencyMissingResponse(message string) Response {
 func NewBadRequestResponse(message string) Response {
 	return &BadRequestResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeInvalid,
 				Message: message,
 			},
@@ -466,7 +466,7 @@ type ValidationErrorResponse struct {
 // NewValidationErrorResponse creates a BadRequest response for invalid API validation.
 func NewValidationErrorResponse(errors validator.ValidationErrors) Response {
 	body := v1.ErrorResponse{
-		Error: v1.ErrorDetails{
+		Error: &v1.ErrorDetails{
 			Code:    v1.CodeInvalid,
 			Message: errors.Error(),
 		},
@@ -474,7 +474,7 @@ func NewValidationErrorResponse(errors validator.ValidationErrors) Response {
 
 	for _, fe := range errors {
 		if err, ok := fe.(error); ok {
-			detail := v1.ErrorDetails{
+			detail := &v1.ErrorDetails{
 				Target:  fe.Field(),
 				Message: err.Error(),
 			}
@@ -516,7 +516,7 @@ type NotFoundResponse struct {
 func NewNotFoundMessageResponse(message string) Response {
 	return &NotFoundResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeNotFound,
 				Message: message,
 			},
@@ -528,9 +528,22 @@ func NewNotFoundMessageResponse(message string) Response {
 func NewNotFoundResponse(id resources.ID) Response {
 	return &NotFoundResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeNotFound,
 				Message: fmt.Sprintf("the resource with id '%s' was not found", id.String()),
+				Target:  id.String(),
+			},
+		},
+	}
+}
+
+// NewNotFoundResponse creates a NotFoundResponse with resource id and an additional message.
+func NewNotFoundResponseWithCause(id resources.ID, cause string) Response {
+	return &NotFoundResponse{
+		Body: v1.ErrorResponse{
+			Error: &v1.ErrorDetails{
+				Code:    v1.CodeNotFound,
+				Message: fmt.Sprintf("the resource with id '%s' was not found: %s", id.String(), cause),
 				Target:  id.String(),
 			},
 		},
@@ -541,7 +554,7 @@ func NewNotFoundResponse(id resources.ID) Response {
 func NewNotFoundAPIVersionResponse(resourceType string, namespace string, apiVersion string) Response {
 	return &NotFoundResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeInvalidResourceType, // ARM uses "InvalidResourceType" code with 404 http code.
 				Message: fmt.Sprintf("The resource type '%s' could not be found in the namespace '%s' for api version '%s'.", resourceType, namespace, apiVersion),
 			},
@@ -580,7 +593,7 @@ type ConflictResponse struct {
 func NewConflictResponse(message string) Response {
 	return &ConflictResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeConflict,
 				Message: message,
 			},
@@ -648,7 +661,7 @@ type PreconditionFailedResponse struct {
 func NewPreconditionFailedResponse(target string, message string) Response {
 	return &PreconditionFailedResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodePreconditionFailed,
 				Message: message,
 				Target:  target,
@@ -686,7 +699,7 @@ type ClientAuthenticationFailed struct {
 func NewClientAuthenticationFailedARMResponse() Response {
 	return &ClientAuthenticationFailed{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeInvalidAuthenticationInfo,
 				Message: "Server failed to authenticate the request",
 			},
@@ -729,7 +742,7 @@ func NewAsyncOperationResultResponse(headers map[string]string) Response {
 // Apply sets the response headers and status code to http.StatusAccepted and returns nil.
 func (r *AsyncOperationResultResponse) Apply(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
-	logger.Info(fmt.Sprintf("responding with status code: %d", http.StatusAccepted), logging.LogHTTPStatusCode, http.StatusAccepted)
+	logger.V(ucplog.LevelDebug).Info(fmt.Sprintf("responding with status code: %d", http.StatusAccepted), logging.LogHTTPStatusCode, http.StatusAccepted)
 
 	w.Header().Add("Content-Type", "application/json")
 
@@ -754,7 +767,7 @@ type MethodNotAllowedResponse struct {
 func NewMethodNotAllowedResponse(target string, message string) Response {
 	return &MethodNotAllowedResponse{
 		Body: v1.ErrorResponse{
-			Error: v1.ErrorDetails{
+			Error: &v1.ErrorDetails{
 				Code:    v1.CodeInvalid,
 				Message: message,
 				Target:  target,

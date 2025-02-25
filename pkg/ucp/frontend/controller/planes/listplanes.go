@@ -23,9 +23,9 @@ import (
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	armrpc_controller "github.com/radius-project/radius/pkg/armrpc/frontend/controller"
 	armrpc_rest "github.com/radius-project/radius/pkg/armrpc/rest"
+	"github.com/radius-project/radius/pkg/components/database"
 	"github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/pkg/ucp/datamodel/converter"
-	"github.com/radius-project/radius/pkg/ucp/store"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 )
 
@@ -48,34 +48,49 @@ func NewListPlanes(opts armrpc_controller.Options) (armrpc_controller.Controller
 	}, nil
 }
 
-// Run() queries the storage client for planes in a given scope, creates a response with the results, and
+// Run() queries the database client for planes in a given scope, creates a response with the results, and
 // returns an OKResponse with the response. If an error occurs, it is returned.
 func (e *ListPlanes) Run(ctx context.Context, w http.ResponseWriter, req *http.Request) (armrpc_rest.Response, error) {
 	serviceCtx := v1.ARMRequestContextFromContext(ctx)
 	logger := ucplog.FromContextOrDiscard(ctx)
 
-	query := store.Query{
-		RootScope:    serviceCtx.ResourceID.String(),
-		IsScopeQuery: true,
+	// The plane objects are all stored separately (by plane type). We need to query each type separately.
+	planeTypes := []string{
+		"aws",
+		"azure",
+		"radius",
 	}
-	logger.Info(fmt.Sprintf("Listing planes in scope %s", query.RootScope))
-	result, err := e.StorageClient().Query(ctx, query)
+
+	objs := []database.Object{}
+	for _, planeType := range planeTypes {
+		query := database.Query{
+			RootScope:    serviceCtx.ResourceID.String(),
+			ResourceType: planeType,
+			IsScopeQuery: true,
+		}
+
+		logger.Info(fmt.Sprintf("Listing planes of type %s in scope %s", query.ResourceType, query.RootScope))
+		result, err := e.DatabaseClient().Query(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+
+		objs = append(objs, result.Items...)
+	}
+
+	planes, err := e.createResponse(ctx, objs)
 	if err != nil {
 		return nil, err
 	}
-	listOfPlanes, err := e.createResponse(ctx, result)
-	if err != nil {
-		return nil, err
-	}
-	var ok = armrpc_rest.NewOKResponse(listOfPlanes)
+	var ok = armrpc_rest.NewOKResponse(planes)
 	return ok, nil
 }
 
-func (p *ListPlanes) createResponse(ctx context.Context, result *store.ObjectQueryResult) (*v1.PaginatedList, error) {
+func (p *ListPlanes) createResponse(ctx context.Context, objs []database.Object) (*v1.PaginatedList, error) {
 	serviceCtx := v1.ARMRequestContextFromContext(ctx)
 	items := v1.PaginatedList{}
 
-	for _, item := range result.Items {
+	for _, item := range objs {
 		var plane datamodel.GenericPlane
 		err := item.As(&plane)
 		if err != nil {

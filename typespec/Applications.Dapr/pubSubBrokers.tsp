@@ -38,7 +38,8 @@ using OpenAPI;
 namespace Applications.Dapr;
 
 @doc("Dapr PubSubBroker portable resource")
-model DaprPubSubBrokerResource is TrackedResourceRequired<DaprPubSubBrokerProperties, "daprPubSubBrokers">{
+model DaprPubSubBrokerResource
+  is TrackedResourceRequired<DaprPubSubBrokerProperties, "daprPubSubBrokers"> {
   @doc("PubSubBroker name")
   @key("pubSubBrokerName")
   @path
@@ -75,7 +76,7 @@ interface PubSubBrokers {
     UCPBaseParameters<DaprPubSubBrokerResource>
   >;
 
-  delete is ArmResourceDeleteAsync<
+  delete is ArmResourceDeleteWithoutOkAsync<
     DaprPubSubBrokerResource,
     UCPBaseParameters<DaprPubSubBrokerResource>
   >;

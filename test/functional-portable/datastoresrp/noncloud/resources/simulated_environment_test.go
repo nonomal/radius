@@ -19,6 +19,7 @@ package resource_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/radius-project/radius/test/rp"
@@ -75,17 +76,23 @@ func Test_Deployment_SimulatedEnv_BicepRecipe(t *testing.T) {
 				// Verify no actual pods are deployed
 				require.Equal(t, 0, len(pods.Items))
 
-				env, err := ct.Options.ManagementClient.GetEnvDetails(ctx, envName)
+				env, err := ct.Options.ManagementClient.GetEnvironment(ctx, envName)
 				require.NoError(t, err)
 				require.True(t, *env.Properties.Simulated)
 
-				resources, err := ct.Options.ManagementClient.ListAllResourcesByApplication(ctx, appName)
+				resources, err := ct.Options.ManagementClient.ListResourcesInApplication(ctx, appName)
 				require.NoError(t, err)
 				require.Equal(t, 2, len(resources))
-				require.Equal(t, mongoDBName, *resources[0].Name)
-				require.Equal(t, "Applications.Datastores/mongoDatabases", *resources[0].Type)
-				require.Equal(t, containerName, *resources[1].Name)
-				require.Equal(t, "Applications.Core/containers", *resources[1].Type)
+				if strings.EqualFold(*resources[0].Type, "Applications.Datastores/mongoDatabases") {
+					require.Equal(t, mongoDBName, *resources[0].Name)
+					require.Equal(t, "Applications.Core/containers", *resources[1].Type)
+					require.Equal(t, containerName, *resources[1].Name)
+				} else {
+					require.Equal(t, "Applications.Core/containers", *resources[0].Type)
+					require.Equal(t, containerName, *resources[0].Name)
+					require.Equal(t, mongoDBName, *resources[1].Name)
+					require.Equal(t, "Applications.Datastores/mongoDatabases", *resources[1].Type)
+				}
 			},
 		},
 	})

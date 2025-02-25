@@ -34,7 +34,7 @@ type Interface interface {
 
 var _ Interface = (*Impl)(nil)
 
-//go:generate mockgen -destination=./mock_bicep.go -package=bicep -self_package github.com/radius-project/radius/pkg/cli/bicep github.com/radius-project/radius/pkg/cli/bicep Interface
+//go:generate mockgen -typed -destination=./mock_bicep.go -package=bicep -self_package github.com/radius-project/radius/pkg/cli/bicep github.com/radius-project/radius/pkg/cli/bicep Interface
 
 // Impl is the implementation of Interface.
 type Impl struct {
@@ -56,7 +56,7 @@ func (*Impl) PrepareTemplate(filePath string) (map[string]any, error) {
 	}
 
 	if !ok {
-		output.LogInfo(fmt.Sprintf("Downloading Bicep for channel %s...", version.Channel()))
+		output.LogInfo("Downloading Bicep for channel %s...", version.Channel())
 		err = DownloadBicep()
 		if err != nil {
 			return nil, fmt.Errorf("failed to download rad-bicep: %w", err)

@@ -20,8 +20,8 @@ import (
 	"github.com/radius-project/radius/test/radcli"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"go.uber.org/mock/gomock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func Test_CommandValidation(t *testing.T) {
@@ -50,7 +50,7 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					ShowApplication(gomock.Any(), "test-app").
+					GetApplication(gomock.Any(), "test-app").
 					Return(application, nil).
 					Times(1)
 			},
@@ -58,7 +58,6 @@ func Test_Validate(t *testing.T) {
 				runner := r.(*Runner)
 				// These values are used by Run()
 				require.Equal(t, "test-app", runner.ApplicationName)
-				require.Equal(t, "test-env", runner.EnvironmentName)
 			},
 		},
 		{
@@ -71,7 +70,7 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					ShowApplication(gomock.Any(), "test-app").
+					GetApplication(gomock.Any(), "test-app").
 					Return(application, nil).
 					Times(1)
 			},
@@ -79,7 +78,6 @@ func Test_Validate(t *testing.T) {
 				runner := r.(*Runner)
 				// These values are used by Run()
 				require.Equal(t, "test-app", runner.ApplicationName)
-				require.Equal(t, "test-env", runner.EnvironmentName)
 			},
 		},
 		{
@@ -92,7 +90,7 @@ func Test_Validate(t *testing.T) {
 			},
 			ConfigureMocks: func(mocks radcli.ValidateMocks) {
 				mocks.ApplicationManagementClient.EXPECT().
-					ShowApplication(gomock.Any(), "test-app").
+					GetApplication(gomock.Any(), "test-app").
 					Return(corerpv20231001preview.ApplicationResource{}, &azcore.ResponseError{ErrorCode: v1.CodeNotFound}).
 					Times(1)
 			},
@@ -161,7 +159,7 @@ func Test_Run(t *testing.T) {
 
 	appManagementClient := clients.NewMockApplicationsManagementClient(ctrl)
 	appManagementClient.EXPECT().
-		GetGraph(gomock.Any(), "test-app").
+		GetApplicationGraph(gomock.Any(), "test-app").
 		Return(graph, nil).
 		Times(1)
 
@@ -181,7 +179,6 @@ func Test_Run(t *testing.T) {
 
 		// Populated by Validate()
 		ApplicationName: "test-app",
-		EnvironmentName: "test-env",
 	}
 
 	err := runner.Run(context.Background())

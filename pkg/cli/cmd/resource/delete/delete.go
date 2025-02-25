@@ -19,21 +19,23 @@ package delete
 import (
 	"context"
 	"fmt"
-	"net/http"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/radius-project/radius/pkg/cli"
+	"github.com/radius-project/radius/pkg/cli/clients"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/prompt"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
+	"github.com/radius-project/radius/pkg/ucp/resources"
 	"github.com/spf13/cobra"
 )
 
 const (
-	deleteConfirmation = "Are you sure you want to delete resource %v of type %v?"
+	deleteConfirmationWithoutApplicationOrEnvironment = "Are you sure you want to delete resource '%v' of type %v?"
+	deleteConfirmationWithoutApplication              = "Are you sure you want to delete resource '%v' of type %v from environment '%v'?"
+	deleteConfirmationWithApplication                 = "Are you sure you want to delete resource '%v' of type %v in application '%v' from environment '%v'?"
 )
 
 // NewCommand creates an instance of the command and runner for the `rad resource delete` command.
@@ -50,10 +52,10 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Short: "Delete a Radius resource",
 		Long:  "Deletes a Radius resource with the given name",
 		Example: `
-		sample list of resourceType: containers, gateways, daprPubSubBrokers, extenders, mongoDatabases, rabbitMQMessageQueues, redisCaches, sqlDatabases, daprStateStores, daprSecretStores
-		
-		# Delete a container named orders
-		rad resource delete containers orders`,
+sample list of resourceType: Applications.Core/containers, Applications.Core/gateways, Applications.Dapr/daprPubSubBrokers, Applications.Core/extenders, Applications.Datastores/mongoDatabases, Applications.Messaging/rabbitMQMessageQueues, Applications.Datastores/redisCaches, Applications.Datastores/sqlDatabases, Applications.Dapr/daprStateStores, Applications.Dapr/daprSecretStores
+
+# Delete a container named orders
+rad resource delete Applications.Core/containers orders`,
 		Args: cobra.ExactArgs(2),
 		RunE: framework.RunCommand(runner),
 	}
@@ -68,13 +70,13 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 
 // Runner is the runner implementation for the `rad resource delete` command.
 type Runner struct {
-	ConfigHolder      *framework.ConfigHolder
-	ConnectionFactory connections.Factory
-	Output            output.Interface
-	Workspace         *workspaces.Workspace
-	ResourceType      string
-	ResourceName      string
-	Format            string
+	ConfigHolder                   *framework.ConfigHolder
+	ConnectionFactory              connections.Factory
+	Output                         output.Interface
+	Workspace                      *workspaces.Workspace
+	FullyQualifiedResourceTypeName string
+	ResourceName                   string
+	Format                         string
 
 	InputPrompter prompt.Interface
 	Confirm       bool
@@ -108,11 +110,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace.Scope = scope
 
-	resourceType, resourceName, err := cli.RequireResourceTypeAndName(args)
+	resourceProviderName, resourceTypeName, resourceName, err := cli.RequireFullyQualifiedResourceTypeAndName(args)
 	if err != nil {
 		return err
 	}
-	r.ResourceType = resourceType
+	r.FullyQualifiedResourceTypeName = resourceProviderName + "/" + resourceTypeName
 	r.ResourceName = resourceName
 
 	format, err := cli.RequireOutput(cmd)
@@ -136,27 +138,41 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run checks if the user has confirmed the deletion of the resource, and if so, attempts to delete the resource and
 // logs the result. If an error occurs, it is returned.
 func (r *Runner) Run(ctx context.Context) error {
-	// Prompt user to confirm deletion
-	if !r.Confirm {
-		confirmed, err := prompt.YesOrNoPrompt(fmt.Sprintf(deleteConfirmation, r.ResourceName, r.ResourceType), prompt.ConfirmNo, r.InputPrompter)
-		if err != nil {
-			return err
-		}
-		if !confirmed {
-			r.Output.LogInfo("resource %q of type %q NOT deleted", r.ResourceName, r.ResourceType)
-			return nil
-		}
-	}
-
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
 	if err != nil {
 		return err
 	}
 
-	var respFromCtx *http.Response
-	ctxWithResp := runtime.WithCaptureResponse(ctx, &respFromCtx)
+	environmentID, applicationID, err := r.extractEnvironmentAndApplicationIDs(ctx, client)
+	if clients.Is404Error(err) {
+		r.Output.LogInfo("Resource '%s' of type '%s' does not exist or has already been deleted", r.ResourceName, r.FullyQualifiedResourceTypeName)
+		return nil
+	} else if err != nil {
+		return err
+	}
 
-	deleted, err := client.DeleteResource(ctxWithResp, r.ResourceType, r.ResourceName)
+	// Prompt user to confirm deletion
+	if !r.Confirm {
+		var promptMessage string
+		if applicationID.IsEmpty() && environmentID.IsEmpty() {
+			promptMessage = fmt.Sprintf(deleteConfirmationWithoutApplicationOrEnvironment, r.ResourceName, r.FullyQualifiedResourceTypeName)
+		} else if applicationID.IsEmpty() {
+			promptMessage = fmt.Sprintf(deleteConfirmationWithoutApplication, r.ResourceName, r.FullyQualifiedResourceTypeName, environmentID.Name())
+		} else {
+			promptMessage = fmt.Sprintf(deleteConfirmationWithApplication, r.ResourceName, r.FullyQualifiedResourceTypeName, applicationID.Name(), environmentID.Name())
+		}
+
+		confirmed, err := prompt.YesOrNoPrompt(promptMessage, prompt.ConfirmNo, r.InputPrompter)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			r.Output.LogInfo("resource %q of type %q NOT deleted", r.ResourceName, r.FullyQualifiedResourceTypeName)
+			return nil
+		}
+	}
+
+	deleted, err := client.DeleteResource(ctx, r.FullyQualifiedResourceTypeName, r.ResourceName)
 	if err != nil {
 		return err
 	}
@@ -164,8 +180,78 @@ func (r *Runner) Run(ctx context.Context) error {
 	if deleted {
 		r.Output.LogInfo("Resource deleted")
 	} else {
-		r.Output.LogInfo("Resource '%s' of type '%s' does not exist or has already been deleted", r.ResourceName, r.ResourceType)
+		r.Output.LogInfo("Resource '%s' of type '%s' does not exist or has already been deleted", r.ResourceName, r.FullyQualifiedResourceTypeName)
 	}
 
 	return nil
+}
+
+func (r *Runner) extractEnvironmentAndApplicationIDs(ctx context.Context, client clients.ApplicationsManagementClient) (environmentID resources.ID, applicationID resources.ID, err error) {
+	resource, err := client.GetResource(ctx, r.FullyQualifiedResourceTypeName, r.ResourceName)
+	if err != nil {
+		return resources.ID{}, resources.ID{}, err
+	}
+
+	// Note: The following cases are all possible:
+	//
+	// 1. The resource has an environment and an application. (common case for a standard resource)
+	// 2. The resource has an environment but no application. (possible case for a *shared* standard resource)
+	// 3. The resource has an application but no environment. (common case for a *core* resource like a container)
+	//		- In this case, the environment can be looked up through the application
+	//		- See: https://github.com/radius-project/radius/issues/2928
+	// 4. The resource has no environment or application. (eg: a Bicep deployment)
+	if resource.Properties["environment"] != nil {
+		environmentID, err = convertToResourceID(resource.Properties["environment"])
+		if err != nil {
+			return resources.ID{}, resources.ID{}, err
+		}
+	}
+
+	if resource.Properties["application"] != nil {
+		applicationID, err = convertToResourceID(resource.Properties["application"])
+		if err != nil {
+			return resources.ID{}, resources.ID{}, err
+		}
+	}
+
+	// Detect case 4: (no environment or application)
+	if environmentID.IsEmpty() && applicationID.IsEmpty() {
+		return resources.ID{}, resources.ID{}, nil
+	}
+
+	// At this point we have the environment and application IDs **if** they were returned by
+	// the API. That covers case 1 & 2. Now we need to handle case 3, by doing an additional
+	// lookup.
+	if !environmentID.IsEmpty() {
+		return environmentID, applicationID, nil // Case 1 or Case 2
+	}
+
+	if applicationID.IsEmpty() {
+		return resources.ID{}, resources.ID{}, nil
+	}
+
+	application, err := client.GetApplication(ctx, applicationID.String())
+	if clients.Is404Error(err) {
+		// Ignore 404s for this case, and just assume there is no application. The user is
+		// likely just doing cleanup and we don't want to block them.
+		return environmentID, resources.ID{}, nil
+	} else if err != nil {
+		return resources.ID{}, resources.ID{}, err
+	}
+
+	environmentID, err = resources.ParseResource(*application.Properties.Environment)
+	if err != nil {
+		return resources.ID{}, resources.ID{}, err
+	}
+
+	return environmentID, applicationID, nil
+}
+
+func convertToResourceID(value any) (resources.ID, error) {
+	resourceIDRaw, ok := value.(string)
+	if !ok {
+		return resources.ID{}, fmt.Errorf("resource ID is not a string")
+	}
+
+	return resources.ParseResource(resourceIDRaw)
 }

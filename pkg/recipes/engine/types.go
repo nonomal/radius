@@ -23,7 +23,7 @@ import (
 	rpv1 "github.com/radius-project/radius/pkg/rp/v1"
 )
 
-//go:generate mockgen -destination=./mock_engine.go -package=engine -self_package github.com/radius-project/radius/pkg/recipes/engine github.com/radius-project/radius/pkg/recipes/engine Engine
+//go:generate mockgen -typed -destination=./mock_engine.go -package=engine -self_package github.com/radius-project/radius/pkg/recipes/engine github.com/radius-project/radius/pkg/recipes/engine Engine
 
 type Engine interface {
 	// Execute gathers environment configuration, recipe definition and calls the driver to deploy the recipe.
@@ -34,7 +34,7 @@ type Engine interface {
 	Delete(ctx context.Context, opts DeleteOptions) error
 
 	// Gets the Recipe metadata and parameters from Recipe's template path
-	GetRecipeMetadata(ctx context.Context, recipeDefinition recipes.EnvironmentDefinition) (map[string]any, error)
+	GetRecipeMetadata(ctx context.Context, opts GetRecipeMetadataOptions) (map[string]any, error)
 }
 
 // BaseOptions is the base options for the engine operations.
@@ -58,4 +58,9 @@ type DeleteOptions struct {
 
 	// OutputResources is the list of output resources for the recipe.
 	OutputResources []rpv1.OutputResource
+}
+
+type GetRecipeMetadataOptions struct {
+	BaseOptions
+	RecipeDefinition recipes.EnvironmentDefinition
 }

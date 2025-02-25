@@ -37,10 +37,11 @@ using OpenAPI;
 namespace Applications.Core;
 
 @doc("Response for list secrets API call")
-model ExtenderListSecretResponse {}
+model ExtenderListSecretResponse extends Record<unknown> {}
 
 @doc("ExtenderResource portable resource")
-model ExtenderResource is TrackedResourceRequired<ExtenderProperties, "extenders">{
+model ExtenderResource
+  is TrackedResourceRequired<ExtenderProperties, "extenders"> {
   @path
   @doc("The name of the ExtenderResource portable resource")
   @key("extenderName")
@@ -81,7 +82,7 @@ interface Extenders {
     UCPBaseParameters<ExtenderResource>
   >;
 
-  delete is ArmResourceDeleteAsync<
+  delete is ArmResourceDeleteWithoutOkAsync<
     ExtenderResource,
     UCPBaseParameters<ExtenderResource>
   >;

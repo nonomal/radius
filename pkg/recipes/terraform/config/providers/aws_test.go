@@ -24,17 +24,28 @@ import (
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/sdk"
+
+	"github.com/radius-project/radius/pkg/components/secret"
 	ucp_credentials "github.com/radius-project/radius/pkg/ucp/credentials"
-	"github.com/radius-project/radius/pkg/ucp/secret"
+	ucp_datamodel "github.com/radius-project/radius/pkg/ucp/datamodel"
 	"github.com/radius-project/radius/test/testcontext"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	testRegion         = "test-region"
-	testAWSCredentials = ucp_credentials.AWSCredential{
-		AccessKeyID:     "testAccessKey",
-		SecretAccessKey: "testSecretKey",
+	testRegion                  = "test-region"
+	testAWSAccessKeyCredentials = ucp_credentials.AWSCredential{
+		Kind: ucp_datamodel.AWSAccessKeyCredentialKind,
+		AccessKeyCredential: &ucp_datamodel.AWSAccessKeyCredentialProperties{
+			AccessKeyID:     "testAccessKey",
+			SecretAccessKey: "testSecretKey",
+		},
+	}
+	testAWSIRSACredentials = ucp_credentials.AWSCredential{
+		Kind: ucp_datamodel.AWSIRSACredentialKind,
+		IRSACredential: &ucp_datamodel.AWSIRSACredentialProperties{
+			RoleARN: "testRoleARN",
+		},
 	}
 )
 
@@ -42,11 +53,25 @@ type mockAWSCredentialsProvider struct {
 	testCredential *ucp_credentials.AWSCredential
 }
 
-func newMockAWSCredentialsProvider() *mockAWSCredentialsProvider {
+func newMockAWSAccessKeyCredentialsProvider() *mockAWSCredentialsProvider {
 	return &mockAWSCredentialsProvider{
 		testCredential: &ucp_credentials.AWSCredential{
-			AccessKeyID:     testAWSCredentials.AccessKeyID,
-			SecretAccessKey: testAWSCredentials.SecretAccessKey,
+			Kind: ucp_datamodel.AWSAccessKeyCredentialKind,
+			AccessKeyCredential: &ucp_datamodel.AWSAccessKeyCredentialProperties{
+				AccessKeyID:     testAWSAccessKeyCredentials.AccessKeyCredential.AccessKeyID,
+				SecretAccessKey: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
+			},
+		},
+	}
+}
+
+func newMockAWSIRSACredentialsProvider() *mockAWSCredentialsProvider {
+	return &mockAWSCredentialsProvider{
+		testCredential: &ucp_credentials.AWSCredential{
+			Kind: ucp_datamodel.AWSIRSACredentialKind,
+			IRSACredential: &ucp_datamodel.AWSIRSACredentialProperties{
+				RoleARN: testAWSIRSACredentials.IRSACredential.RoleARN,
+			},
 		},
 	}
 }
@@ -58,12 +83,20 @@ func (p *mockAWSCredentialsProvider) Fetch(ctx context.Context, planeName, name 
 		return nil, &secret.ErrNotFound{}
 	}
 
-	if p.testCredential.AccessKeyID == "" && p.testCredential.SecretAccessKey == "" {
-		return p.testCredential, nil
-	}
+	switch p.testCredential.Kind {
+	case ucp_datamodel.AWSAccessKeyCredentialKind:
+		if p.testCredential.AccessKeyCredential.AccessKeyID == "" && p.testCredential.AccessKeyCredential.SecretAccessKey == "" {
+			return p.testCredential, nil
+		}
 
-	if p.testCredential.AccessKeyID == "" {
-		return nil, errors.New("failed to fetch credential")
+		if p.testCredential.AccessKeyCredential.AccessKeyID == "" {
+			return nil, errors.New("failed to fetch credential")
+		}
+
+	case ucp_datamodel.AWSIRSACredentialKind:
+		if p.testCredential.IRSACredential.RoleARN == "" {
+			return nil, errors.New("failed to fetch credential")
+		}
 	}
 
 	return p.testCredential, nil
@@ -177,7 +210,7 @@ func TestAwsProvider_getCredentialsProvider(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestAWSProvider_FetchCredentials(t *testing.T) {
+func TestAWSProvider_FetchAcessKeyCredentials(t *testing.T) {
 	tests := []struct {
 		desc                string
 		credentialsProvider *mockAWSCredentialsProvider
@@ -185,9 +218,9 @@ func TestAWSProvider_FetchCredentials(t *testing.T) {
 		expectedErr         bool
 	}{
 		{
-			desc:                "valid credentials",
-			credentialsProvider: newMockAWSCredentialsProvider(),
-			expectedCreds:       &testAWSCredentials,
+			desc:                "valid accesskey credentials",
+			credentialsProvider: newMockAWSAccessKeyCredentialsProvider(),
+			expectedCreds:       &testAWSAccessKeyCredentials,
 			expectedErr:         false,
 		},
 		{
@@ -199,22 +232,61 @@ func TestAWSProvider_FetchCredentials(t *testing.T) {
 			expectedErr:   false,
 		},
 		{
-			desc: "empty values - no error",
+			desc: "empty values aws access key - no error",
 			credentialsProvider: &mockAWSCredentialsProvider{
 				&ucp_credentials.AWSCredential{
-					AccessKeyID:     "",
-					SecretAccessKey: "",
+					Kind: ucp_datamodel.AWSAccessKeyCredentialKind,
+					AccessKeyCredential: &ucp_datamodel.AWSAccessKeyCredentialProperties{
+						AccessKeyID:     testAWSAccessKeyCredentials.AccessKeyCredential.AccessKeyID,
+						SecretAccessKey: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
+					},
 				},
 			},
 			expectedCreds: nil,
 			expectedErr:   false,
 		},
 		{
-			desc: "fetch credential error",
+			desc: "fetch accesskey credential error",
 			credentialsProvider: &mockAWSCredentialsProvider{
 				&ucp_credentials.AWSCredential{
-					AccessKeyID:     "",
-					SecretAccessKey: testAWSCredentials.SecretAccessKey,
+					Kind: ucp_datamodel.AWSAccessKeyCredentialKind,
+					AccessKeyCredential: &ucp_datamodel.AWSAccessKeyCredentialProperties{
+						AccessKeyID:     "",
+						SecretAccessKey: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
+					},
+				},
+			},
+			expectedCreds: nil,
+			expectedErr:   true,
+		},
+
+		{
+			desc:                "valid IRSA credentials",
+			credentialsProvider: newMockAWSIRSACredentialsProvider(),
+			expectedCreds:       &testAWSIRSACredentials,
+			expectedErr:         false,
+		},
+		{
+			desc: "empty values aws IRSA - no error",
+			credentialsProvider: &mockAWSCredentialsProvider{
+				&ucp_credentials.AWSCredential{
+					Kind: ucp_datamodel.AWSIRSACredentialKind,
+					IRSACredential: &ucp_datamodel.AWSIRSACredentialProperties{
+						RoleARN: testAWSIRSACredentials.IRSACredential.RoleARN,
+					},
+				},
+			},
+			expectedCreds: nil,
+			expectedErr:   false,
+		},
+		{
+			desc: "fetch IRSA credential error",
+			credentialsProvider: &mockAWSCredentialsProvider{
+				&ucp_credentials.AWSCredential{
+					Kind: ucp_datamodel.AWSIRSACredentialKind,
+					IRSACredential: &ucp_datamodel.AWSIRSACredentialProperties{
+						RoleARN: "",
+					},
 				},
 			},
 			expectedCreds: nil,
@@ -246,21 +318,35 @@ func TestAWSProvider_generateProviderConfigMap(t *testing.T) {
 		expectedConfig map[string]any
 	}{
 		{
-			desc:        "valid config",
+			desc:        "valid accesskey credential config",
 			region:      testRegion,
-			credentials: testAWSCredentials,
+			credentials: testAWSAccessKeyCredentials,
 			expectedConfig: map[string]any{
 				awsRegionParam:    testRegion,
-				awsAccessKeyParam: testAWSCredentials.AccessKeyID,
-				awsSecretKeyParam: testAWSCredentials.SecretAccessKey,
+				awsAccessKeyParam: testAWSAccessKeyCredentials.AccessKeyCredential.AccessKeyID,
+				awsSecretKeyParam: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
+			},
+		},
+
+		{
+			desc:        "valid IRSA credential config",
+			region:      testRegion,
+			credentials: testAWSIRSACredentials,
+			expectedConfig: map[string]any{
+				awsRegionParam: testRegion,
+				awsIRSAProvider: map[string]any{
+					awsRoleARN:  testAWSIRSACredentials.IRSACredential.RoleARN,
+					sessionName: "radius-terraform-" + "test-uuid",
+					tokenFile:   tokenFilePath,
+				},
 			},
 		},
 		{
 			desc:        "missing region",
-			credentials: testAWSCredentials,
+			credentials: testAWSAccessKeyCredentials,
 			expectedConfig: map[string]any{
-				awsAccessKeyParam: testAWSCredentials.AccessKeyID,
-				awsSecretKeyParam: testAWSCredentials.SecretAccessKey,
+				awsAccessKeyParam: testAWSAccessKeyCredentials.AccessKeyCredential.AccessKeyID,
+				awsSecretKeyParam: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
 			},
 		},
 		{
@@ -271,10 +357,23 @@ func TestAWSProvider_generateProviderConfigMap(t *testing.T) {
 			},
 		},
 		{
-			desc: "invalid credentials",
+			desc: "invalid accesskey credentials",
 			credentials: ucp_credentials.AWSCredential{
-				AccessKeyID:     "",
-				SecretAccessKey: testAWSCredentials.SecretAccessKey,
+				Kind: ucp_datamodel.AWSAccessKeyCredentialKind,
+				AccessKeyCredential: &ucp_datamodel.AWSAccessKeyCredentialProperties{
+					AccessKeyID:     "",
+					SecretAccessKey: testAWSAccessKeyCredentials.AccessKeyCredential.SecretAccessKey,
+				},
+			},
+			expectedConfig: map[string]any{},
+		},
+		{
+			desc: "invalid IRSA credentials",
+			credentials: ucp_credentials.AWSCredential{
+				Kind: ucp_datamodel.AWSIRSACredentialKind,
+				IRSACredential: &ucp_datamodel.AWSIRSACredentialProperties{
+					RoleARN: "",
+				},
 			},
 			expectedConfig: map[string]any{},
 		},
@@ -288,6 +387,14 @@ func TestAWSProvider_generateProviderConfigMap(t *testing.T) {
 			require.Equal(t, tt.expectedConfig[awsRegionParam], config[awsRegionParam])
 			require.Equal(t, tt.expectedConfig[awsAccessKeyParam], config[awsAccessKeyParam])
 			require.Equal(t, tt.expectedConfig[awsSecretKeyParam], config[awsSecretKeyParam])
+
+			if tt.expectedConfig[awsIRSAProvider] != nil {
+				expectedAWSIRSAProvider := tt.expectedConfig[awsIRSAProvider].(map[string]any)
+				AWSIRSAProvider := config[awsIRSAProvider].(map[string]any)
+				require.Equal(t, expectedAWSIRSAProvider[awsRoleARN], AWSIRSAProvider[awsRoleARN])
+				require.Contains(t, expectedAWSIRSAProvider[sessionName], "radius-terraform-")
+				require.Equal(t, expectedAWSIRSAProvider[tokenFile], AWSIRSAProvider[tokenFile])
+			}
 		})
 	}
 }

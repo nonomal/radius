@@ -29,6 +29,8 @@ import (
 	"github.com/radius-project/radius/pkg/armrpc/frontend/defaultoperation"
 	"github.com/radius-project/radius/pkg/armrpc/frontend/server"
 	aztoken "github.com/radius-project/radius/pkg/azure/tokencredentials"
+	"github.com/radius-project/radius/pkg/retry"
+	"github.com/radius-project/radius/pkg/ucp"
 	"github.com/radius-project/radius/pkg/ucp/api/v20231001preview"
 	ucp_aws "github.com/radius-project/radius/pkg/ucp/aws"
 	sdk_cred "github.com/radius-project/radius/pkg/ucp/credentials"
@@ -37,7 +39,6 @@ import (
 	awsproxy_ctrl "github.com/radius-project/radius/pkg/ucp/frontend/controller/awsproxy"
 	aws_credential_ctrl "github.com/radius-project/radius/pkg/ucp/frontend/controller/credentials/aws"
 	planes_ctrl "github.com/radius-project/radius/pkg/ucp/frontend/controller/planes"
-	"github.com/radius-project/radius/pkg/ucp/hostoptions"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 	"github.com/radius-project/radius/pkg/validator"
 )
@@ -80,7 +81,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		}
 	}
 
-	baseRouter := server.NewSubrouter(m.router, m.options.PathBase)
+	baseRouter := server.NewSubrouter(m.router, m.options.Config.Server.PathBase+"/")
 
 	apiValidator := validator.APIValidator(validator.Options{
 		SpecLoader:         m.options.SpecLoader,
@@ -93,7 +94,6 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 	}
 
 	// URLs for lifecycle of planes
-	planeResourceType := "System.AWS/planes"
 	planeCollectionRouter := server.NewSubrouter(baseRouter, planeCollectionPath, apiValidator)
 	planeResourceRouter := server.NewSubrouter(baseRouter, planeResourcePath, apiValidator)
 
@@ -102,7 +102,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			// This is a scope query so we can't use the default operation.
 			ParentRouter:  planeCollectionRouter,
 			Method:        v1.OperationList,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationList},
+			ResourceType:  datamodel.AWSPlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AWSPlaneResourceType, Method: v1.OperationList},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return &planes_ctrl.ListPlanesByType[*datamodel.AWSPlane, datamodel.AWSPlane]{
 					Operation: controller.NewOperation(opts, planeResourceOptions),
@@ -112,7 +113,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationGet,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationGet},
+			ResourceType:  datamodel.AWSPlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AWSPlaneResourceType, Method: v1.OperationGet},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewGetResource(opts, planeResourceOptions)
 			},
@@ -120,7 +122,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationPut,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationPut},
+			ResourceType:  datamodel.AWSPlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AWSPlaneResourceType, Method: v1.OperationPut},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewDefaultSyncPut(opts, planeResourceOptions)
 			},
@@ -128,7 +131,8 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		{
 			ParentRouter:  planeResourceRouter,
 			Method:        v1.OperationDelete,
-			OperationType: &v1.OperationType{Type: planeResourceType, Method: v1.OperationDelete},
+			ResourceType:  datamodel.AWSPlaneResourceType,
+			OperationType: &v1.OperationType{Type: datamodel.AWSPlaneResourceType, Method: v1.OperationDelete},
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return defaultoperation.NewDefaultSyncDelete(opts, planeResourceOptions)
 			},
@@ -138,6 +142,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter:  server.NewSubrouter(baseRouter, operationResultsPath),
 			Method:        v1.OperationGet,
 			OperationType: &v1.OperationType{Type: OperationResultsResourceType, Method: v1.OperationGet},
+			ResourceType:  OperationResultsResourceType,
 			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewGetAWSOperationResults(opt, m.AWSClients)
 			},
@@ -147,6 +152,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter:  server.NewSubrouter(baseRouter, operationStatusesPath),
 			Method:        v1.OperationGet,
 			OperationType: &v1.OperationType{Type: OperationStatusResourceType, Method: v1.OperationGet},
+			ResourceType:  OperationStatusResourceType,
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewGetAWSOperationStatuses(opts, m.AWSClients)
 			},
@@ -160,6 +166,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			ParentRouter:  resourceCollectionRouter,
 			Method:        v1.OperationList,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationList},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewListAWSResources(opts, m.AWSClients)
 			},
@@ -169,6 +176,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/{resourceName}",
 			Method:        v1.OperationPut,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationPut},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewCreateOrUpdateAWSResource(opts, m.AWSClients)
 			},
@@ -178,6 +186,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/{resourceName}",
 			Method:        v1.OperationDelete,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationDelete},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewDeleteAWSResource(opts, m.AWSClients)
 			},
@@ -187,6 +196,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/{resourceName}",
 			Method:        v1.OperationGet,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationGet},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewGetAWSResource(opt, m.AWSClients)
 			},
@@ -204,6 +214,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/:put",
 			Method:        v1.OperationPutImperative,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationPutImperative},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewCreateOrUpdateAWSResourceWithPost(opt, m.AWSClients)
 			},
@@ -213,8 +224,9 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/:get",
 			Method:        v1.OperationGetImperative,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationGetImperative},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opt controller.Options) (controller.Controller, error) {
-				return awsproxy_ctrl.NewGetAWSResourceWithPost(opt, m.AWSClients)
+				return awsproxy_ctrl.NewGetAWSResourceWithPost(opt, m.AWSClients, retry.NewDefaultRetryer())
 			},
 		},
 		{
@@ -222,6 +234,7 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 			Path:          "/:delete",
 			Method:        v1.OperationDeleteImperative,
 			OperationType: &v1.OperationType{Type: OperationTypeAWSResource, Method: v1.OperationDeleteImperative},
+			ResourceType:  OperationTypeAWSResource,
 			ControllerFactory: func(opts controller.Options) (controller.Controller, error) {
 				return awsproxy_ctrl.NewDeleteAWSResourceWithPost(opts, m.AWSClients)
 			},
@@ -280,10 +293,19 @@ func (m *Module) Initialize(ctx context.Context) (http.Handler, error) {
 		},
 	}...)
 
+	databaseClient, err := m.options.DatabaseProvider.GetClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	ctrlOpts := controller.Options{
-		Address:      m.options.Address,
-		PathBase:     m.options.PathBase,
-		DataProvider: m.options.DataProvider,
+		Address:        m.options.Config.Server.Address(),
+		DatabaseClient: databaseClient,
+		PathBase:       m.options.Config.Server.PathBase,
+		StatusManager:  m.options.StatusManager,
+
+		KubeClient:   nil, // Unused by AWS module
+		ResourceType: "",  // Set dynamically
 	}
 
 	for _, h := range handlerOptions {
@@ -300,8 +322,8 @@ func (m *Module) newAWSConfig(ctx context.Context) (aws.Config, error) {
 	credProviders := []func(*config.LoadOptions) error{}
 
 	switch m.options.Config.Identity.AuthMethod {
-	case hostoptions.AuthUCPCredential:
-		provider, err := sdk_cred.NewAWSCredentialProvider(m.options.SecretProvider, m.options.UCPConnection, &aztoken.AnonymousCredential{})
+	case ucp.AuthUCPCredential:
+		provider, err := sdk_cred.NewAWSCredentialProvider(m.options.SecretProvider, m.options.UCP, &aztoken.AnonymousCredential{})
 		if err != nil {
 			return aws.Config{}, err
 		}

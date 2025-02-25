@@ -21,8 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
-	"github.com/radius-project/radius/pkg/metrics"
+	"github.com/radius-project/radius/pkg/components/metrics"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/configloader"
 	recipedriver "github.com/radius-project/radius/pkg/recipes/driver"
@@ -173,8 +172,8 @@ func (e *engine) deleteCore(ctx context.Context, recipe recipes.ResourceMetadata
 }
 
 // Gets the Recipe metadata and parameters from Recipe's template path.
-func (e *engine) GetRecipeMetadata(ctx context.Context, recipeDefinition recipes.EnvironmentDefinition) (map[string]any, error) {
-	recipeData, err := e.getRecipeMetadataCore(ctx, recipeDefinition)
+func (e *engine) GetRecipeMetadata(ctx context.Context, opts GetRecipeMetadataOptions) (map[string]any, error) {
+	recipeData, err := e.getRecipeMetadataCore(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -184,16 +183,30 @@ func (e *engine) GetRecipeMetadata(ctx context.Context, recipeDefinition recipes
 
 // getRecipeMetadataCore function is the core logic of the GetRecipeMetadata function.
 // Any changes to the core logic of the GetRecipeMetadata function should be made here.
-func (e *engine) getRecipeMetadataCore(ctx context.Context, recipeDefinition recipes.EnvironmentDefinition) (map[string]any, error) {
+func (e *engine) getRecipeMetadataCore(ctx context.Context, opts GetRecipeMetadataOptions) (map[string]any, error) {
+	// Load environment configuration to get the recipe config information which contains the secrets.
+	// Secrets are needed to download terraform recipes from private module sources, currently for private git repositories.
+	configuration, err := e.options.ConfigurationLoader.LoadConfiguration(ctx, opts.Recipe)
+	if err != nil {
+		return nil, err
+	}
+
 	// Determine Recipe driver type
-	driver, ok := e.options.Drivers[recipeDefinition.Driver]
+	driver, ok := e.options.Drivers[opts.RecipeDefinition.Driver]
 	if !ok {
-		return nil, fmt.Errorf("could not find driver %s", recipeDefinition.Driver)
+		return nil, fmt.Errorf("could not find driver %s", opts.RecipeDefinition.Driver)
+	}
+
+	secrets, err := e.getRecipeConfigSecrets(ctx, driver, configuration, &opts.RecipeDefinition)
+	if err != nil {
+		return nil, err
 	}
 
 	return driver.GetRecipeMetadata(ctx, recipedriver.BaseOptions{
-		Recipe:     recipes.ResourceMetadata{},
-		Definition: recipeDefinition,
+		Recipe:        recipes.ResourceMetadata{},
+		Definition:    opts.RecipeDefinition,
+		Secrets:       secrets,
+		Configuration: *configuration,
 	})
 }
 
@@ -213,24 +226,24 @@ func (e *engine) getDriver(ctx context.Context, recipeMetadata recipes.ResourceM
 	return definition, driver, nil
 }
 
-func (e *engine) getRecipeConfigSecrets(ctx context.Context, driver recipedriver.Driver, configuration *recipes.Configuration, definition *recipes.EnvironmentDefinition) (v20231001preview.SecretStoresClientListSecretsResponse, error) {
-	secrets := v20231001preview.SecretStoresClientListSecretsResponse{}
+func (e *engine) getRecipeConfigSecrets(ctx context.Context, driver recipedriver.Driver, configuration *recipes.Configuration, definition *recipes.EnvironmentDefinition) (secretData map[string]recipes.SecretData, err error) {
 	driverWithSecrets, ok := driver.(recipedriver.DriverWithSecrets)
 	if !ok {
-		return secrets, nil
+		return nil, nil
 	}
 
-	secretStore, err := driverWithSecrets.FindSecretIDs(ctx, *configuration, *definition)
+	secretStoreIDResourceKeys, err := driverWithSecrets.FindSecretIDs(ctx, *configuration, *definition)
 	if err != nil {
-		return v20231001preview.SecretStoresClientListSecretsResponse{}, err
+		return nil, err
 	}
 
-	// Retrieves the secret values from the secret store ID provided.
-	if secretStore != "" {
-		secrets, err = e.options.SecretsLoader.LoadSecrets(ctx, secretStore)
+	// Retrieves the secret values from the secret store IDs and keys provided.
+	if secretStoreIDResourceKeys != nil {
+		secretData, err = e.options.SecretsLoader.LoadSecrets(ctx, secretStoreIDResourceKeys)
 		if err != nil {
-			return v20231001preview.SecretStoresClientListSecretsResponse{}, recipes.NewRecipeError(recipes.LoadSecretsFailed, fmt.Sprintf("failed to fetch secrets from the secret store resource id %s for Terraform recipe %s deployment: %s", secretStore, definition.TemplatePath, err.Error()), util.RecipeSetupError, recipes.GetErrorDetails(err))
+			return nil, recipes.NewRecipeError(recipes.LoadSecretsFailed, fmt.Sprintf("failed to fetch secrets for Terraform recipe %s deployment: %s", definition.TemplatePath, err.Error()), util.RecipeSetupError, recipes.GetErrorDetails(err))
 		}
 	}
-	return secrets, nil
+
+	return secretData, nil
 }

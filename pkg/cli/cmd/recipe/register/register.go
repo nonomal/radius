@@ -19,12 +19,12 @@ package register
 import (
 	"context"
 
-	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
 	"github.com/radius-project/radius/pkg/cli"
 	"github.com/radius-project/radius/pkg/cli/bicep"
 	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/connections"
+	"github.com/radius-project/radius/pkg/cli/filesystem"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
@@ -149,7 +149,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	parser := bicep.ParameterParser{FileSystem: bicep.OSFileSystem{}}
+	parser := bicep.ParameterParser{FileSystem: filesystem.NewOSFS()}
 	r.Parameters, err = parser.Parse(parameterArgs...)
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	envResource, err := client.GetEnvDetails(ctx, r.Workspace.Environment)
+	envResource, err := client.GetEnvironment(ctx, r.Workspace.Environment)
 	if err != nil {
 		return err
 	}
@@ -210,7 +210,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	envResource.Properties.Recipes = envRecipes
 
-	err = client.CreateEnvironment(ctx, r.Workspace.Environment, v1.LocationGlobal, envResource.Properties)
+	err = client.CreateOrUpdateEnvironment(ctx, r.Workspace.Environment, &envResource)
 	if err != nil {
 		return clierrors.MessageWithCause(err, "Failed to register the recipe %q to the environment %q.", r.RecipeName, *envResource.ID)
 	}

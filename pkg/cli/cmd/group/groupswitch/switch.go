@@ -43,11 +43,11 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Short: "Switch default resource group scope",
 		Long: `Switch default resource group scope
 	
-	Radius workspaces contain a resource group scope, where Radius Applications and resources are deployed by default. The switch command changes the default scope of the workspace to the specified resource group name.
-	
-	Resource groups are used to organize and manage Radius resources. They often contain resources that share a common lifecycle or unit of deployment.
-			
-	Note that these resource groups are separate from the Azure cloud provider and Azure resource groups configured with the cloud provider.`,
+Radius workspaces contain a resource group scope, where Radius Applications and resources are deployed by default. The switch command changes the default scope of the workspace to the specified resource group name.
+
+Resource groups are used to organize and manage Radius resources. They often contain resources that share a common lifecycle or unit of deployment.
+		
+Note that these resource groups are separate from the Azure cloud provider and Azure resource groups configured with the cloud provider.`,
 		Example: `rad group switch rgprod -w wsprod`,
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    framework.RunCommand(runner),
@@ -116,7 +116,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	_, err = client.ShowUCPGroup(ctx, "local", r.UCPResourceGroupName)
+	_, err = client.GetResourceGroup(ctx, "local", r.UCPResourceGroupName)
 	if err != nil {
 		return clierrors.Message("The resource group %q does not exist. Run `rad group create` or `rad init` and try again.", r.UCPResourceGroupName)
 	}
